@@ -1,14 +1,18 @@
 mod fs;
 mod fusefs;
 mod hash;
-mod local_store;
 mod store;
+mod local_store;
+mod s3_store;
 
 use std::ffi::OsString;
 use std::path::Path;
 
 fn main() {
-    let local_store = local_store::LocalStore::new("/tmp/local-store".into()).unwrap();
+    let _ = env_logger::try_init();
+
+    //let local_store = local_store::LocalStore::new("/tmp/local-store".into()).unwrap();
+    let store = s3_store::S3Store::open("hugefs");
 
     let json_state = Path::new("/tmp/fs.json");
 
@@ -18,7 +22,7 @@ fn main() {
         fs::Superblock::new()
     };
 
-    let fs = fusefs::Filesystem::new(superblock, Box::new(local_store));
+    let fs = fusefs::Filesystem::new(superblock, Box::new(store));
 
     let s: OsString = "default_permissions".into();
 
