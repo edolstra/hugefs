@@ -7,20 +7,16 @@ use std::fs;
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
-use time::Timespec;
+use std::time::{SystemTime, Duration, UNIX_EPOCH};
 
 pub type Ino = u64;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Time(pub i64);
 
-impl From<&Time> for Timespec {
+impl From<&Time> for SystemTime {
     fn from(time: &Time) -> Self {
-        Self {
-            sec: time.0 / 1000000000,
-            nsec: (time.0 % 1000000000) as i32,
-        }
+        SystemTime::UNIX_EPOCH + Duration::from_nanos(time.0 as u64)
     }
 }
 

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::Bound::{Excluded, Unbounded};
 use std::path::Path;
-use time::Timespec;
+use std::time::{SystemTime, Duration};
 
 pub struct Filesystem {
     superblock: Superblock,
@@ -101,7 +101,7 @@ impl fuse::Filesystem for Filesystem {
             if let Contents::Directory(dir) = &inode.contents {
                 if let Some(entry) = dir.entries.get(name.to_str().unwrap()) {
                     let child = self.superblock.get_inode(*entry).unwrap();
-                    reply.entry(&Timespec::new(60, 0), &child.into(), 0);
+                    reply.entry(&Duration::from_secs(60), &child.into(), 0);
                 } else {
                     reply.error(libc::ENOENT);
                 }
@@ -120,7 +120,7 @@ impl fuse::Filesystem for Filesystem {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: fuse::ReplyAttr) {
         println!("getattr {}", ino);
         if let Some(inode) = self.superblock.get_inode(ino) {
-            reply.attr(&Timespec::new(60, 0), &inode.into());
+            reply.attr(&Duration::from_secs(60), &inode.into());
         } else {
             reply.error(libc::ENOENT);
         }
@@ -134,12 +134,12 @@ impl fuse::Filesystem for Filesystem {
         _uid: Option<u32>,
         _gid: Option<u32>,
         _size: Option<u64>,
-        _atime: Option<Timespec>,
-        _mtime: Option<Timespec>,
+        _atime: Option<SystemTime>,
+        _mtime: Option<SystemTime>,
         _fh: Option<u64>,
-        _crtime: Option<Timespec>,
-        _chgtime: Option<Timespec>,
-        _bkuptime: Option<Timespec>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
         _flags: Option<u32>,
         reply: fuse::ReplyAttr,
     ) {
