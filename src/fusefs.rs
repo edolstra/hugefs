@@ -86,17 +86,13 @@ const FOPEN_KEEP_CACHE: u32 = 1 << 1;
 
 impl fuse::Filesystem for Filesystem {
     fn init(&mut self, _req: &Request) -> Result<(), c_int> {
-        println!("init");
         Ok(())
     }
 
     fn destroy(&mut self, _req: &Request) {
-        println!("destroy");
     }
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: fuse::ReplyEntry) {
-        println!("lookup {} {:?}", parent, name);
-
         if let Some(inode) = self.superblock.get_inode(parent) {
             if let Contents::Directory(dir) = &inode.contents {
                 if let Some(entry) = dir.entries.get(name.to_str().unwrap()) {
@@ -114,11 +110,9 @@ impl fuse::Filesystem for Filesystem {
     }
 
     fn forget(&mut self, _req: &Request, _ino: u64, _nlookup: u64) {
-        println!("forget");
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: fuse::ReplyAttr) {
-        println!("getattr {}", ino);
         if let Some(inode) = self.superblock.get_inode(ino) {
             reply.attr(&Duration::from_secs(60), &inode.into());
         } else {
@@ -143,12 +137,10 @@ impl fuse::Filesystem for Filesystem {
         _flags: Option<u32>,
         reply: fuse::ReplyAttr,
     ) {
-        println!("getattr");
         reply.error(libc::EROFS);
     }
 
     fn readlink(&mut self, _req: &Request, _ino: u64, reply: fuse::ReplyData) {
-        println!("readlink");
         reply.error(libc::ENOTSUP);
     }
 
@@ -161,7 +153,6 @@ impl fuse::Filesystem for Filesystem {
         _rdev: u32,
         reply: fuse::ReplyEntry,
     ) {
-        println!("mknod");
         reply.error(libc::EROFS);
     }
 
@@ -173,17 +164,14 @@ impl fuse::Filesystem for Filesystem {
         _mode: u32,
         reply: fuse::ReplyEntry,
     ) {
-        println!("mkdir");
         reply.error(libc::EROFS);
     }
 
     fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: ReplyEmpty) {
-        println!("unlink");
         reply.error(libc::EROFS);
     }
 
     fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: ReplyEmpty) {
-        println!("rmdir");
         reply.error(libc::EROFS);
     }
 
@@ -195,7 +183,6 @@ impl fuse::Filesystem for Filesystem {
         _link: &Path,
         reply: fuse::ReplyEntry,
     ) {
-        println!("symlink");
         reply.error(libc::EROFS);
     }
 
@@ -208,7 +195,6 @@ impl fuse::Filesystem for Filesystem {
         _newname: &OsStr,
         reply: ReplyEmpty,
     ) {
-        println!("rename");
         reply.error(libc::EROFS);
     }
 
@@ -220,13 +206,10 @@ impl fuse::Filesystem for Filesystem {
         _newname: &OsStr,
         reply: fuse::ReplyEntry,
     ) {
-        println!("link");
         reply.error(libc::EROFS);
     }
 
     fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: fuse::ReplyOpen) {
-        println!("open");
-
         if let Some(inode) = self.superblock.get_inode(ino) {
             if inode.file_type() == fuse::FileType::RegularFile {
                 let fh = self.new_file_handle(OpenFile::new(ino));
@@ -248,8 +231,6 @@ impl fuse::Filesystem for Filesystem {
         size: u32,
         reply: fuse::ReplyData,
     ) {
-        println!("read {} {}", offset, size);
-
         if let Some(open_file) = self.file_handles.get_mut(&fh) {
             assert_eq!(ino, open_file.ino);
             if let Some(inode) = self.superblock.get_inode(ino) {
@@ -280,12 +261,10 @@ impl fuse::Filesystem for Filesystem {
         _flags: u32,
         reply: fuse::ReplyWrite,
     ) {
-        println!("write");
         reply.error(libc::EROFS);
     }
 
     fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
-        println!("flush");
         reply.ok();
     }
 
@@ -299,8 +278,6 @@ impl fuse::Filesystem for Filesystem {
         _flush: bool,
         reply: ReplyEmpty,
     ) {
-        println!("release");
-
         if let Some(_) = self.file_handles.remove(&fh) {
             reply.ok();
         } else {
@@ -309,13 +286,10 @@ impl fuse::Filesystem for Filesystem {
     }
 
     fn fsync(&mut self, _req: &Request, _ino: u64, _fh: u64, _datasync: bool, reply: ReplyEmpty) {
-        println!("fsync");
         reply.ok();
     }
 
     fn opendir(&mut self, _req: &Request, ino: u64, _flags: u32, reply: fuse::ReplyOpen) {
-        println!("opendir");
-
         if let Some(inode) = self.superblock.get_inode(ino) {
             if inode.file_type() == fuse::FileType::Directory {
                 let mut open_file = OpenFile::new(ino);
@@ -338,8 +312,6 @@ impl fuse::Filesystem for Filesystem {
         _offset: i64,
         mut reply: fuse::ReplyDirectory,
     ) {
-        println!("readdir");
-
         if let Some(open_file) = self.file_handles.get_mut(&fh) {
             assert_eq!(ino, open_file.ino);
             if let Some(prev_dir_entry) = &mut open_file.prev_dir_entry {
@@ -377,8 +349,6 @@ impl fuse::Filesystem for Filesystem {
     }
 
     fn releasedir(&mut self, _req: &Request, _ino: u64, fh: u64, _flags: u32, reply: ReplyEmpty) {
-        println!("releasedir");
-
         if let Some(_) = self.file_handles.remove(&fh) {
             reply.ok();
         } else {
@@ -394,53 +364,46 @@ impl fuse::Filesystem for Filesystem {
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        println!("fsyncidr");
         reply.ok();
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuse::ReplyStatfs) {
-        println!("statfs");
         reply.error(libc::ENOTSUP);
     }
 
     fn setxattr(
         &mut self,
         _req: &Request,
-        ino: u64,
-        name: &OsStr,
+        _ino: u64,
+        _name: &OsStr,
         _value: &[u8],
         _flags: u32,
         _position: u32,
         reply: ReplyEmpty,
     ) {
-        println!("setxattr {} {:?}", ino, name);
         reply.error(libc::ENOTSUP);
     }
 
     fn getxattr(
         &mut self,
         _req: &Request,
-        ino: u64,
-        name: &OsStr,
+        _ino: u64,
+        _name: &OsStr,
         _size: u32,
         reply: fuse::ReplyXattr,
     ) {
-        println!("getxattr {} {:?}", ino, name);
         reply.error(libc::ENOTSUP);
     }
 
-    fn listxattr(&mut self, _req: &Request, ino: u64, _size: u32, reply: fuse::ReplyXattr) {
-        println!("listxattr {}", ino);
+    fn listxattr(&mut self, _req: &Request, _ino: u64, _size: u32, reply: fuse::ReplyXattr) {
         reply.error(libc::ENOTSUP);
     }
 
-    fn removexattr(&mut self, _req: &Request, ino: u64, _name: &OsStr, reply: ReplyEmpty) {
-        println!("removexattr {}", ino);
+    fn removexattr(&mut self, _req: &Request, _ino: u64, _name: &OsStr, reply: ReplyEmpty) {
         reply.error(libc::ENOTSUP);
     }
 
     fn access(&mut self, _req: &Request, _ino: u64, _mask: u32, reply: ReplyEmpty) {
-        println!("access");
         // FIXME: should not be called with default_permissions
         reply.ok();
     }
@@ -454,7 +417,6 @@ impl fuse::Filesystem for Filesystem {
         _flags: u32,
         reply: fuse::ReplyCreate,
     ) {
-        println!("create");
         reply.error(libc::EROFS);
     }
 
@@ -470,7 +432,6 @@ impl fuse::Filesystem for Filesystem {
         _pid: u32,
         reply: fuse::ReplyLock,
     ) {
-        println!("getlk");
         reply.error(libc::ENOTSUP);
     }
 
@@ -487,7 +448,6 @@ impl fuse::Filesystem for Filesystem {
         _sleep: bool,
         reply: ReplyEmpty,
     ) {
-        println!("setlk");
         reply.error(libc::ENOTSUP);
     }
 
@@ -499,7 +459,6 @@ impl fuse::Filesystem for Filesystem {
         _idx: u64,
         reply: fuse::ReplyBmap,
     ) {
-        println!("bmap");
         reply.error(libc::ENOTSUP);
     }
 }
