@@ -3,6 +3,7 @@ use crate::store::Store;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
+use log::debug;
 
 pub struct LocalStore {
     root: PathBuf,
@@ -29,7 +30,7 @@ impl Store for LocalStore {
 
         if !path.exists() {
             // FIXME: make atomic
-            println!("WRITE {:?}", path);
+            debug!("writing {:?}", path);
             let mut file = std::fs::File::create(&path)?;
             file.write_all(data)?
         }

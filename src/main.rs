@@ -11,8 +11,8 @@ use std::path::Path;
 fn main() {
     let _ = env_logger::try_init();
 
-    //let local_store = local_store::LocalStore::new("/tmp/local-store".into()).unwrap();
-    let store = s3_store::S3Store::open("hugefs");
+    let store = local_store::LocalStore::new("/tmp/local-store".into()).unwrap();
+    //let store = s3_store::S3Store::open("hugefs");
 
     let json_state = Path::new("/tmp/fs.json");
 
@@ -25,8 +25,6 @@ fn main() {
     let fs = fusefs::Filesystem::new(superblock, Box::new(store));
 
     let s: OsString = "default_permissions".into();
-
-    println!("mounting...");
 
     fuse::mount(fs, &"/home/eelco/mnt/tmp", &vec![s.as_os_str()]).unwrap();
 }

@@ -3,6 +3,7 @@ use crate::store::Store;
 use rusoto_core::Region;
 use rusoto_s3::{S3, S3Client, GetObjectRequest};
 use std::io::Read;
+use log::debug;
 
 pub struct S3Store {
     s3_client: S3Client,
@@ -33,7 +34,7 @@ impl Store for S3Store {
     fn get(&mut self, file_hash: &Hash, offset: u64, size: u32) -> std::io::Result<Vec<u8>> {
         assert!(size > 0);
         let key = self.key_for_hash(file_hash);
-        println!("GET s3://{}/{}", self.bucket_name, key);
+        debug!("GET s3://{}/{}", self.bucket_name, key);
         match self.s3_client.get_object(GetObjectRequest {
             bucket: self.bucket_name.clone(),
             key,
