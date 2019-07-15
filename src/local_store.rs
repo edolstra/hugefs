@@ -44,8 +44,9 @@ impl Store for LocalStore {
             let path = self.path_for_hash(&file_hash);
             let file = tokio::fs::File::open(path).compat().await?;
             let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
-            let (_, buf, _) = tokio::io::read(file, Vec::with_capacity(size as usize)).compat().await?;
-            assert!(buf.len() <= size as usize);
+            let (_, mut buf, n) = tokio::io::read(file, vec![0; size as usize]).compat().await?;
+            assert!(n <= size as usize);
+            buf.resize(n, 0);
             Ok(buf)
         }.boxed()
     }
