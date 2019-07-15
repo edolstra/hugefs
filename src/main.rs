@@ -1,3 +1,5 @@
+#![feature(await_macro, async_await)]
+
 mod fs;
 mod fusefs;
 mod hash;
@@ -7,9 +9,13 @@ mod s3_store;
 
 use std::ffi::OsString;
 use std::path::Path;
+use tokio::runtime::Runtime;
+use tokio::prelude::*;
 
 fn main() {
     let _ = env_logger::try_init();
+
+    let rt = Runtime::new().unwrap();
 
     let store = local_store::LocalStore::new("/tmp/local-store".into()).unwrap();
     //let store = s3_store::S3Store::open("hugefs");
@@ -22,9 +28,11 @@ fn main() {
         fs::Superblock::new()
     };
 
-    let fs = fusefs::Filesystem::new(superblock, Box::new(store));
+    let fs = fusefs::Filesystem::new(superblock, std::sync::Arc::new(store), rt.executor());
 
     let s: OsString = "default_permissions".into();
 
     fuse::mount(fs, &"/home/eelco/mnt/tmp", &vec![s.as_os_str()]).unwrap();
+
+    rt.shutdown_on_idle().wait().unwrap();
 }

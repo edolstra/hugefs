@@ -1,9 +1,9 @@
 use crate::hash::Hash;
 use crate::store::Store;
 use std::io::Write;
-use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 use log::debug;
+use futures::{future::FutureExt, compat::Future01CompatExt};
 
 pub struct LocalStore {
     root: PathBuf,
@@ -23,7 +23,7 @@ impl LocalStore {
 }
 
 impl Store for LocalStore {
-    fn add(&mut self, data: &[u8]) -> std::io::Result<Hash> {
+    fn add(&self, data: &[u8]) -> std::io::Result<Hash> {
         let hash = Hash::hash(data)?;
 
         let path = self.path_for_hash(&hash);
@@ -38,12 +38,15 @@ impl Store for LocalStore {
         Ok(hash)
     }
 
-    fn get(&mut self, file_hash: &Hash, offset: u64, size: u32) -> std::io::Result<Vec<u8>> {
-        let path = self.path_for_hash(&file_hash);
-        let file = std::fs::File::open(&path)?;
-        let mut buf = vec![0; size as usize];
-        let n = nix::sys::uio::pread(file.as_raw_fd(), buf.as_mut_slice(), offset as i64)?;
-        buf.resize(n, 0);
-        Ok(buf)
+    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>> {
+        let file_hash = file_hash.clone();
+        async move {
+            let path = self.path_for_hash(&file_hash);
+            let file = tokio::fs::File::open(path).compat().await?;
+            let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
+            let (_, buf, _) = tokio::io::read(file, Vec::with_capacity(size as usize)).compat().await?;
+            assert!(buf.len() <= size as usize);
+            Ok(buf)
+        }.boxed()
     }
 }

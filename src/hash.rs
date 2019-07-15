@@ -1,6 +1,7 @@
 use blake2::Digest;
 use std::fmt::Write;
 
+#[derive(Clone)]
 pub struct Hash([u8; 64]);
 
 impl Hash {

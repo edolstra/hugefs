@@ -2,8 +2,8 @@ use crate::hash::Hash;
 use crate::store::Store;
 use rusoto_core::Region;
 use rusoto_s3::{S3, S3Client, GetObjectRequest};
-use std::io::Read;
 use log::debug;
+use futures::{future::FutureExt, compat::Future01CompatExt};
 
 pub struct S3Store {
     s3_client: S3Client,
@@ -27,28 +27,30 @@ impl S3Store {
 }
 
 impl Store for S3Store {
-    fn add(&mut self, _data: &[u8]) -> std::io::Result<Hash> {
+    fn add(&self, _data: &[u8]) -> std::io::Result<Hash> {
         unimplemented!()
     }
 
-    fn get(&mut self, file_hash: &Hash, offset: u64, size: u32) -> std::io::Result<Vec<u8>> {
+    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>> {
         assert!(size > 0);
         let key = self.key_for_hash(file_hash);
         debug!("GET s3://{}/{}", self.bucket_name, key);
-        match self.s3_client.get_object(GetObjectRequest {
-            bucket: self.bucket_name.clone(),
-            key,
-            range: Some(format!("bytes={}-{}", offset, offset + (size as u64) - 1)),
-            ..Default::default()
-        }).sync() {
-            Ok(res) => {
-                let mut buf = Vec::new();
-                res.body.unwrap().into_blocking_read().read_to_end(&mut buf)?;
-                assert!(buf.len() <= size as usize);
-                Ok(buf)
-            },
-            Err(err) => panic!(err)
-        }
+        async move {
+            match self.s3_client.get_object(GetObjectRequest {
+                bucket: self.bucket_name.clone(),
+                key,
+                range: Some(format!("bytes={}-{}", offset, offset + (size as u64) - 1)),
+                ..Default::default()
+            }).compat().await {
+                Ok(res) => {
+                    let r = res.body.unwrap().into_async_read();
+                    let (_, buf) = tokio::io::read_to_end(r, Vec::with_capacity(size as usize)).compat().await?;
+                    assert!(buf.len() <= size as usize);
+                    Ok(buf)
+                },
+                Err(err) => panic!(err) // FIXME
+            }
+        }.boxed()
     }
 }
 
