@@ -9,7 +9,7 @@ edition = "2018"
 fuse = { path = "../rust-fuse" }
 libc = "0.2"
 base64 = "0.10"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 blake2 = "0.8"
 nix = "0.5"

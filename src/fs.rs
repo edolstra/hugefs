@@ -8,6 +8,7 @@ use std::io::Read;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::time::{SystemTime, Duration, UNIX_EPOCH};
+use std::sync::{Arc, RwLock};
 
 pub type Ino = u64;
 
@@ -22,14 +23,14 @@ impl From<&Time> for SystemTime {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Superblock {
-    inodes: HashMap<Ino, Inode>,
+    inodes: HashMap<Ino, Arc<RwLock<Inode>>>,
     root_ino: Ino,
     next_ino: Ino,
 }
 
 impl Superblock {
-    pub fn get_inode<'a>(self: &'a Self, ino: Ino) -> Option<&'a Inode> {
-        self.inodes.get(&ino)
+    pub fn get_inode(self: &Self, ino: Ino) -> Option<Arc<RwLock<Inode>>> {
+        self.inodes.get(&ino).map(|inode| Arc::clone(inode))
     }
 }
 
@@ -84,7 +85,7 @@ impl Superblock {
         let mut inodes = HashMap::new();
         inodes.insert(
             root_ino,
-            Inode {
+            Arc::new(RwLock::new(Inode {
                 ino: root_ino,
                 perm: 0o700,
                 uid: 0,
@@ -95,7 +96,7 @@ impl Superblock {
                     entries: BTreeMap::new(),
                 }),
                 //parents: vec![],
-            },
+            })),
         );
         Self {
             inodes,
@@ -111,11 +112,11 @@ impl Superblock {
     pub fn import<S: Store>(&mut self, path: &Path, store: &mut S) -> std::io::Result<()> {
         let file = self.import_file(path, store)?;
         let file_ino = file.ino;
-        self.inodes.insert(file.ino, file);
+        self.inodes.insert(file.ino, Arc::new(RwLock::new(file)));
 
         let root = self.inodes.get_mut(&self.root_ino).unwrap();
 
-        match &mut root.contents {
+        match &mut root.write().unwrap().contents {
             Contents::Directory(dir) => {
                 dir.entries.insert(
                     path.file_name().unwrap().to_str().unwrap().to_string(),
@@ -147,7 +148,7 @@ impl Superblock {
                 let entry = entry?;
                 let file = self.import_file(&entry.path(), store)?;
                 let file_ino = file.ino;
-                self.inodes.insert(file.ino, file);
+                self.inodes.insert(file.ino, Arc::new(RwLock::new(file)));
                 entries.insert(entry.file_name().into_string().unwrap(), file_ino);
             }
             Contents::Directory(Directory { entries })
