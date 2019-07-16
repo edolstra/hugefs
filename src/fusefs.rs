@@ -1,4 +1,4 @@
-use crate::fs::{Contents, Ino, Inode, Superblock};
+use crate::fs::{Contents, Inode, Superblock};
 use crate::store::Store;
 use crate::fuse_util::*;
 use fuse::{ReplyEmpty, Request};
@@ -37,14 +37,14 @@ impl FilesystemState {
 }
 
 struct OpenFile {
-    ino: Ino,
+    inode: Arc<RwLock<Inode>>,
     prev_dir_entry: Option<String>,
 }
 
 impl OpenFile {
-    fn new(ino: Ino) -> Self {
+    fn new(inode: Arc<RwLock<Inode>>) -> Self {
         OpenFile {
-            ino,
+            inode,
             prev_dir_entry: None,
         }
     }
@@ -232,7 +232,7 @@ impl fuse::Filesystem for Filesystem {
         let mut state = self.state.write().unwrap();
         if let Some(inode) = state.superblock.get_inode(ino) {
             if inode.read().unwrap().file_type() == fuse::FileType::RegularFile {
-                let fh = state.new_file_handle(OpenFile::new(ino));
+                let fh = state.new_file_handle(OpenFile::new(inode));
                 reply.opened(fh, FOPEN_KEEP_CACHE);
             } else {
                 reply.error(libc::EISDIR);
@@ -256,15 +256,12 @@ impl fuse::Filesystem for Filesystem {
             let hash = {
                 let state = &mut *state.write().unwrap();
                 if let Some(open_file) = state.file_handles.get_mut(&fh) {
-                    assert_eq!(ino, open_file.ino);
-                    if let Some(inode) = state.superblock.get_inode(ino) {
-                        if let Contents::RegularFile(reg) = &inode.read().unwrap().contents {
-                            reg.hash.clone()
-                        } else {
-                            return Err(libc::EISDIR);
-                        }
+                    let inode = open_file.inode.read().unwrap();
+                    assert_eq!(ino, inode.ino);
+                    if let Contents::RegularFile(reg) = &inode.contents {
+                        reg.hash.clone()
                     } else {
-                        return Err(libc::ENOENT);
+                        return Err(libc::EISDIR);
                     }
                 } else {
                     return Err(libc::EBADF);
@@ -324,7 +321,7 @@ impl fuse::Filesystem for Filesystem {
         let mut state = self.state.write().unwrap();
         if let Some(inode) = state.superblock.get_inode(ino) {
             if inode.read().unwrap().file_type() == fuse::FileType::Directory {
-                let mut open_file = OpenFile::new(ino);
+                let mut open_file = OpenFile::new(inode);
                 open_file.prev_dir_entry = Some(String::new());
                 let fh = state.new_file_handle(open_file);
                 reply.opened(fh, 0);
@@ -346,32 +343,31 @@ impl fuse::Filesystem for Filesystem {
     ) {
         let state = &mut *self.state.write().unwrap();
         if let Some(open_file) = state.file_handles.get_mut(&fh) {
-            assert_eq!(ino, open_file.ino);
+            let inode = open_file.inode.read().unwrap();
+            assert_eq!(ino, inode.ino);
             if let Some(prev_dir_entry) = &mut open_file.prev_dir_entry {
-                if let Some(inode) = state.superblock.get_inode(ino) {
-                    if let Contents::Directory(dir) = &inode.read().unwrap().contents {
-                        // FIXME: clone
-                        for (k, v) in dir
-                            .entries
-                            .range::<String, _>((Excluded(prev_dir_entry.clone()), Unbounded))
-                        {
-                            if reply.add(
-                                ino,
-                                0, /* FIXME */
-                                state.superblock.get_inode(*v).unwrap().read().unwrap().file_type(),
-                                k,
-                            ) {
-                                break;
-                            } else {
-                                *prev_dir_entry = k.clone();
-                            }
+                if let Contents::Directory(dir) = &inode.contents {
+                    // FIXME: clone
+                    for (k, v) in dir
+                        .entries
+                        .range::<String, _>((Excluded(prev_dir_entry.clone()), Unbounded))
+                    {
+                        if reply.add(
+                            ino,
+                            0, /* FIXME */
+                            state.superblock.get_inode(*v).unwrap().read().unwrap().file_type(),
+                            k,
+                        ) {
+                            break;
+                        } else {
+                            *prev_dir_entry = k.clone();
                         }
-
-                        // FIXME: indicate buffer too small
-                        reply.ok();
-                    } else {
-                        reply.error(libc::ENOTDIR);
                     }
+
+                    // FIXME: indicate buffer too small
+                    reply.ok();
+                } else {
+                    reply.error(libc::ENOTDIR);
                 }
             } else {
                 reply.error(libc::ENOTDIR);
