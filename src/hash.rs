@@ -5,12 +5,12 @@ use std::fmt::Write;
 pub struct Hash([u8; 64]);
 
 impl Hash {
-    pub fn hash<R: std::io::Read>(mut r: R) -> std::io::Result<Self> {
+    pub fn hash<R: std::io::Read>(mut r: R) -> std::io::Result<(u64, Self)> {
         let mut hasher = blake2::Blake2b::new();
-        std::io::copy(&mut r, &mut hasher)?;
+        let n = std::io::copy(&mut r, &mut hasher)?;
         let mut hash = [0; 64];
         hash.copy_from_slice(&hasher.result()[..]);
-        Ok(Self(hash))
+        Ok((n, Self(hash)))
     }
 
     pub fn to_string(&self) -> String {

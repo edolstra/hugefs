@@ -1,9 +1,12 @@
 use crate::hash::Hash;
-use crate::store::Store;
+use crate::store::{Future, MutableStore, Store};
+use futures::{compat::Future01CompatExt, future::FutureExt};
+use log::debug;
 use std::io::Write;
 use std::path::PathBuf;
-use log::debug;
-use futures::{future::FutureExt, compat::Future01CompatExt};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
 pub struct LocalStore {
     root: PathBuf,
@@ -15,18 +18,31 @@ impl LocalStore {
         Ok(Self { root })
     }
 
-    fn path_for_hash(&self, file_hash: &Hash) -> PathBuf {
+    fn make_temp_path(&self) -> PathBuf {
         let mut path = self.root.clone();
-        path.push(file_hash.to_hex());
+        path.push(format!(
+            "temp.{}.{}",
+            process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         path
     }
 }
 
+fn path_for_hash(root: impl Into<PathBuf>, file_hash: &Hash) -> PathBuf {
+    let mut path: PathBuf = root.into();
+    path.push(file_hash.to_hex());
+    path
+}
+
 impl Store for LocalStore {
     fn add(&self, data: &[u8]) -> std::io::Result<Hash> {
-        let hash = Hash::hash(data)?;
+        let (_, hash) = Hash::hash(data)?;
 
-        let path = self.path_for_hash(&hash);
+        let path = path_for_hash(&self.root, &hash);
 
         if !path.exists() {
             // FIXME: make atomic
@@ -38,16 +54,126 @@ impl Store for LocalStore {
         Ok(hash)
     }
 
-    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>> {
+    fn get<'a>(
+        &'a self,
+        file_hash: &Hash,
+        offset: u64,
+        size: u32,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>>
+    {
         let file_hash = file_hash.clone();
         async move {
-            let path = self.path_for_hash(&file_hash);
+            let path = path_for_hash(&self.root, &file_hash);
             let file = tokio::fs::File::open(path).compat().await?;
             let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
-            let (_, mut buf, n) = tokio::io::read(file, vec![0; size as usize]).compat().await?;
+            let (_, mut buf, n) = tokio::io::read(file, vec![0; size as usize])
+                .compat()
+                .await?;
             assert!(n <= size as usize);
             buf.resize(n, 0);
             Ok(buf)
-        }.boxed()
+        }
+            .boxed()
+    }
+}
+
+struct MutableFile {
+    temp_path: PathBuf,
+    file: futures::lock::Mutex<Option<tokio::fs::File>>,
+    len: AtomicU64,
+}
+
+impl Drop for MutableFile {
+    fn drop(&mut self) {
+        // FIXME: only do this when necessary
+        let _ = std::fs::remove_file(&self.temp_path);
+    }
+}
+
+impl MutableStore for LocalStore {
+    fn create_file<'a>(&'a self) -> Future<'a, Box<dyn crate::store::MutableFile>> {
+        async move {
+            let temp_path = self.make_temp_path();
+            let file = tokio::fs::OpenOptions::new()
+                .create_new(true)
+                .read(true)
+                .write(true)
+                .open(temp_path.clone())
+                .compat()
+                .await?;
+            let handle: Box<dyn crate::store::MutableFile> = Box::new(MutableFile {
+                temp_path,
+                file: futures::lock::Mutex::new(Some(file)),
+                len: AtomicU64::new(0),
+            });
+            Ok(handle)
+        }
+            .boxed()
+    }
+}
+
+impl crate::store::MutableFile for MutableFile {
+    fn write<'a>(&'a self, offset: u64, data: &'a [u8]) -> Future<'a, ()> {
+        async move {
+            let mut file_lock = self.file.lock().await;
+            if let Some(file) = file_lock.take() {
+                let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
+                let (file, _) = tokio::io::write_all(file, data).compat().await?;
+                *file_lock = Some(file);
+                self.len
+                    .fetch_max(offset + data.len() as u64, Ordering::Relaxed);
+                Ok(())
+            } else {
+                panic!("write handle invalidated by previous write error") // FIXME: return error
+            }
+        }
+            .boxed()
+    }
+
+    fn read<'a>(&'a self, offset: u64, size: u32) -> Future<'a, Vec<u8>> {
+        async move {
+            let mut file_lock = self.file.lock().await;
+            if let Some(file) = file_lock.take() {
+                let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
+                let (file, mut buf, n) = tokio::io::read(file, vec![0; size as usize])
+                    .compat()
+                    .await?;
+                *file_lock = Some(file);
+                assert!(n <= size as usize);
+                buf.resize(n, 0);
+                Ok(buf)
+            } else {
+                panic!("write handle invalidated by previous write error") // FIXME: return error
+            }
+        }
+            .boxed()
+    }
+
+    fn finish<'a>(&'a self) -> Future<'a, (u64, Hash)> {
+        async move {
+            let mut file_lock = self.file.lock().await;
+            if let Some(file) = file_lock.take() {
+                let (file, _) = file.seek(std::io::SeekFrom::Start(0)).compat().await?;
+                let (len, hash) = Hash::hash(file)?; // FIXME: this can block
+                let final_path = path_for_hash(self.temp_path.clone().parent().unwrap(), &hash);
+                if final_path.exists() {
+                    tokio::fs::remove_file(self.temp_path.clone())
+                        .compat()
+                        .await?;
+                } else {
+                    tokio::fs::rename(self.temp_path.clone(), final_path)
+                        .compat()
+                        .await?;
+                }
+                Ok((len, hash))
+            } else {
+                panic!("write handle invalidated by previous write error") // FIXME: return error
+            }
+        }
+            .boxed()
+    }
+
+    fn len(&self) -> u64 {
+        self.len.load(Ordering::Relaxed)
     }
 }

@@ -1,17 +1,18 @@
-#![feature(await_macro, async_await)]
+#![feature(await_macro, async_await, atomic_min_max)]
 
+mod error;
 mod fs;
+mod fuse_util;
 mod fusefs;
 mod hash;
-mod store;
 mod local_store;
 mod s3_store;
-mod fuse_util;
+mod store;
 
 use std::ffi::OsString;
 use std::path::Path;
-use tokio::runtime::Runtime;
 use tokio::prelude::*;
+use tokio::runtime::Runtime;
 
 fn main() {
     let _ = env_logger::try_init();

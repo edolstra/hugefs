@@ -1,9 +1,9 @@
 use crate::hash::Hash;
 use crate::store::Store;
-use rusoto_core::Region;
-use rusoto_s3::{S3, S3Client, GetObjectRequest};
+use futures::{compat::Future01CompatExt, future::FutureExt};
 use log::debug;
-use futures::{future::FutureExt, compat::Future01CompatExt};
+use rusoto_core::Region;
+use rusoto_s3::{GetObjectRequest, S3Client, S3};
 
 pub struct S3Store {
     s3_client: S3Client,
@@ -11,7 +11,6 @@ pub struct S3Store {
 }
 
 impl S3Store {
-
     pub fn open(bucket_name: &str) -> Self {
         let s3_client = S3Client::new(Region::EuWest1);
 
@@ -31,26 +30,39 @@ impl Store for S3Store {
         unimplemented!()
     }
 
-    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>> {
+    fn get<'a>(
+        &'a self,
+        file_hash: &Hash,
+        offset: u64,
+        size: u32,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>>
+    {
         assert!(size > 0);
         let key = self.key_for_hash(file_hash);
         debug!("GET s3://{}/{}", self.bucket_name, key);
         async move {
-            match self.s3_client.get_object(GetObjectRequest {
-                bucket: self.bucket_name.clone(),
-                key,
-                range: Some(format!("bytes={}-{}", offset, offset + (size as u64) - 1)),
-                ..Default::default()
-            }).compat().await {
+            match self
+                .s3_client
+                .get_object(GetObjectRequest {
+                    bucket: self.bucket_name.clone(),
+                    key,
+                    range: Some(format!("bytes={}-{}", offset, offset + (size as u64) - 1)),
+                    ..Default::default()
+                })
+                .compat()
+                .await
+            {
                 Ok(res) => {
                     let r = res.body.unwrap().into_async_read();
-                    let (_, buf) = tokio::io::read_to_end(r, Vec::with_capacity(size as usize)).compat().await?;
+                    let (_, buf) = tokio::io::read_to_end(r, Vec::with_capacity(size as usize))
+                        .compat()
+                        .await?;
                     assert!(buf.len() <= size as usize);
                     Ok(buf)
-                },
-                Err(err) => panic!(err) // FIXME
+                }
+                Err(err) => panic!(err), // FIXME
             }
-        }.boxed()
+        }
+            .boxed()
     }
 }
-
