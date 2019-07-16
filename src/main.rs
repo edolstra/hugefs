@@ -6,6 +6,7 @@ mod hash;
 mod store;
 mod local_store;
 mod s3_store;
+mod fuse_util;
 
 use std::ffi::OsString;
 use std::path::Path;

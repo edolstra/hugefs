@@ -1,5 +1,6 @@
 use crate::fs::{Contents, Ino, Inode, Superblock};
 use crate::store::Store;
+use crate::fuse_util::*;
 use fuse::{ReplyEmpty, Request};
 use libc::c_int;
 use std::collections::HashMap;
@@ -8,7 +9,6 @@ use std::ops::Bound::{Excluded, Unbounded};
 use std::path::Path;
 use std::time::{SystemTime, Duration};
 use std::sync::{Arc, RwLock};
-use futures::{FutureExt, TryFutureExt};
 use log::error;
 
 pub struct FilesystemState {
@@ -100,8 +100,6 @@ impl Filesystem {
     }
 
 }
-
-const FOPEN_KEEP_CACHE: u32 = 1 << 1;
 
 impl fuse::Filesystem for Filesystem {
     fn init(&mut self, _req: &Request) -> Result<(), c_int> {
@@ -254,37 +252,33 @@ impl fuse::Filesystem for Filesystem {
         reply: fuse::ReplyData,
     ) {
         let state = Arc::clone(&self.state);
-        self.executor.spawn(async move {
-            let hash;
-            {
+        wrap_read(&self.executor, reply, async move {
+            let hash = {
                 let state = &mut *state.write().unwrap();
                 if let Some(open_file) = state.file_handles.get_mut(&fh) {
                     assert_eq!(ino, open_file.ino);
                     if let Some(inode) = state.superblock.get_inode(ino) {
                         if let Contents::RegularFile(reg) = &inode.contents {
-                            hash = Some(reg.hash.clone());
+                            reg.hash.clone()
                         } else {
-                            reply.error(libc::EISDIR);
-                            return;
+                            return Err(libc::EISDIR);
                         }
                     } else {
-                        reply.error(libc::ENOENT);
-                        return;
+                        return Err(libc::ENOENT);
                     }
                 } else {
-                    reply.error(libc::EBADF);
-                    return;
+                    return Err(libc::EBADF);
                 }
-            }
+            };
             let store = Arc::clone(&state.read().unwrap().store);
-            match store.get(&hash.unwrap(), offset as u64, size).await {
-                Ok(data) => { reply.data(&data); }
+            match store.get(&hash, offset as u64, size).await {
+                Ok(data) => return Ok(data),
                 Err(err) => {
                     error!("Error reading file {}: {}", ino, err);
-                    reply.error(libc::EIO);
+                    return Err(libc::EIO);
                 }
             }
-        }.unit_error().boxed().compat());
+        });
     }
 
     fn write(
