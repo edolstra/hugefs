@@ -11,6 +11,7 @@ mod store;
 
 use std::ffi::OsString;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use tokio::prelude::*;
 use tokio::runtime::Runtime;
 
@@ -30,11 +31,18 @@ fn main() {
         fs::Superblock::new()
     };
 
-    let fs = fusefs::Filesystem::new(superblock, std::sync::Arc::new(store), rt.executor());
+    let fs_state = Arc::new(RwLock::new(fusefs::FilesystemState::new(
+        superblock,
+        std::sync::Arc::new(store),
+    )));
+
+    let fs = fusefs::Filesystem::new(Arc::clone(&fs_state), rt.executor());
 
     let s: OsString = "default_permissions".into();
 
     fuse::mount(fs, &"/home/eelco/mnt/tmp", &vec![s.as_os_str()]).unwrap();
 
     rt.shutdown_on_idle().wait().unwrap();
+
+    fs_state.read().unwrap().sync(json_state).unwrap();
 }

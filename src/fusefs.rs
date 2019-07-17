@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::ops::Bound::{Excluded, Unbounded};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, RwLock,
@@ -47,6 +47,15 @@ impl FilesystemState {
         self.file_handles
             .get_mut(&fh)
             .ok_or(Error::BadFileHandle(fh))
+    }
+
+    pub fn sync(&self, path: &Path) -> std::io::Result<()> {
+        let mut temp_path: PathBuf = path.into();
+        temp_path.set_extension("json.tmp");
+        let mut file = std::fs::File::create(&temp_path)?;
+        self.superblock.write_json(&mut file).unwrap();
+        std::fs::rename(temp_path, path)?;
+        Ok(())
     }
 }
 
@@ -107,14 +116,10 @@ pub struct Filesystem {
 
 impl Filesystem {
     pub fn new(
-        superblock: Superblock,
-        store: Store,
+        state: Arc<RwLock<FilesystemState>>,
         executor: tokio::runtime::TaskExecutor,
     ) -> Self {
-        Filesystem {
-            state: Arc::new(RwLock::new(FilesystemState::new(superblock, store))),
-            executor,
-        }
+        Filesystem { state, executor }
     }
 }
 

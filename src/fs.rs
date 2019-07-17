@@ -5,7 +5,7 @@ use libc;
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -188,6 +188,13 @@ impl Superblock {
         json_data: &mut R,
     ) -> std::result::Result<Self, serde_json::error::Error> {
         serde_json::from_reader(json_data)
+    }
+
+    pub fn write_json<W: Write>(
+        &self,
+        file: &mut W,
+    ) -> std::result::Result<(), serde_json::error::Error> {
+        serde_json::ser::to_writer(file, &self)
     }
 
     pub fn import<S: Store>(&mut self, path: &Path, store: &mut S) -> std::io::Result<()> {
