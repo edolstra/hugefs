@@ -6,7 +6,7 @@ use crate::store::MutableStore;
 use fuse::{ReplyEmpty, Request};
 use libc::c_int;
 use log::{debug, error};
-use std::collections::HashMap;
+use std::collections::{btree_map::Entry, HashMap};
 use std::convert::TryInto;
 use std::ffi::OsStr;
 use std::ops::Bound::{Excluded, Unbounded};
@@ -163,25 +163,67 @@ impl fuse::Filesystem for Filesystem {
     fn setattr(
         &mut self,
         _req: &Request,
-        _ino: u64,
-        _mode: Option<u32>,
-        _uid: Option<u32>,
-        _gid: Option<u32>,
-        _size: Option<u64>,
+        ino: u64,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
         _atime: Option<SystemTime>,
-        _mtime: Option<SystemTime>,
+        mtime: Option<SystemTime>,
         _fh: Option<u64>,
-        _crtime: Option<SystemTime>,
+        crtime: Option<SystemTime>,
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
         _flags: Option<u32>,
         reply: fuse::ReplyAttr,
     ) {
-        reply.error(libc::EROFS);
+        let state = Arc::clone(&self.state);
+
+        wrap_attr(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let inode = state.superblock.get_inode(ino)?;
+            let mut inode = inode.write().unwrap();
+
+            if let Some(_) = size {
+                // FIXME: support truncating mutable files.
+                return Err(libc::ENOTSUP.into());
+            }
+
+            if let Some(mode) = mode {
+                inode.perm = mode & 0o7777;
+            }
+
+            if let Some(uid) = uid {
+                inode.uid = uid;
+            }
+
+            if let Some(gid) = gid {
+                inode.gid = gid;
+            }
+
+            if let Some(mtime) = mtime {
+                inode.mtime = mtime.into();
+            }
+
+            if let Some(crtime) = crtime {
+                inode.crtime = crtime.into();
+            }
+
+            Ok((Duration::from_secs(60), (&*inode).into()))
+        });
     }
 
-    fn readlink(&mut self, _req: &Request, _ino: u64, reply: fuse::ReplyData) {
-        reply.error(libc::ENOTSUP);
+    fn readlink(&mut self, _req: &Request, ino: u64, reply: fuse::ReplyData) {
+        let state = Arc::clone(&self.state);
+        wrap_read(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let inode = state.superblock.get_inode(ino)?;
+            let inode = inode.read().unwrap();
+            match &inode.contents {
+                Contents::Symlink(link) => Ok(link.target.as_bytes().to_vec()),
+                _ => Err(libc::EINVAL.into()),
+            }
+        });
     }
 
     fn mknod(
@@ -193,49 +235,191 @@ impl fuse::Filesystem for Filesystem {
         _rdev: u32,
         reply: fuse::ReplyEntry,
     ) {
-        reply.error(libc::EROFS);
+        reply.error(libc::ENOTSUP);
     }
 
     fn mkdir(
         &mut self,
-        _req: &Request,
-        _parent: u64,
-        _name: &OsStr,
-        _mode: u32,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
         reply: fuse::ReplyEntry,
     ) {
-        reply.error(libc::EROFS);
+        let state = Arc::clone(&self.state);
+        let name: String = name.to_str().unwrap().to_string();
+        let uid = req.uid();
+        let gid = req.gid();
+
+        wrap_entry(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let parent = state.superblock.get_inode(parent)?;
+            let mut parent = parent.write().unwrap();
+            let dir = parent.get_directory_mut()?;
+
+            dir.check_no_entry(&name)?;
+
+            let inode = Inode {
+                perm: mode & 0o7777,
+                uid,
+                gid,
+                ..Inode::new(Contents::Directory(crate::fs::Directory::new()))
+            };
+
+            let mut attr: fuse::FileAttr = (&inode).into();
+            let ino = state.superblock.add_inode(inode);
+            dir.entries.insert(name, ino);
+            attr.ino = ino;
+
+            Ok(crate::fuse_util::EntryOk {
+                ttl: Duration::from_secs(60),
+                attr,
+                generation: GENERATION_COUNT.fetch_add(1, Ordering::Relaxed),
+            })
+        });
     }
 
-    fn unlink(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: ReplyEmpty) {
-        reply.error(libc::EROFS);
+    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let state = Arc::clone(&self.state);
+        let name: String = name.to_str().unwrap().to_string();
+
+        wrap_empty(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let parent = state.superblock.get_inode(parent)?;
+            let mut parent = parent.write().unwrap();
+            let dir = parent.get_directory_mut()?;
+
+            match dir.entries.entry(name) {
+                Entry::Vacant(_) => Err(libc::ENOENT.into()),
+                Entry::Occupied(e) => {
+                    let child_ino = *e.get();
+                    let child = state.superblock.get_inode(child_ino)?;
+                    let child = child.read().unwrap();
+
+                    if let Contents::Directory(_) = &child.contents {
+                        Err(libc::EISDIR.into())
+                    } else {
+                        e.remove_entry();
+                        Ok(())
+                    }
+                }
+            }
+        });
     }
 
-    fn rmdir(&mut self, _req: &Request, _parent: u64, _name: &OsStr, reply: ReplyEmpty) {
-        reply.error(libc::EROFS);
+    fn rmdir(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let state = Arc::clone(&self.state);
+        let name: String = name.to_str().unwrap().to_string();
+
+        wrap_empty(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let parent = state.superblock.get_inode(parent)?;
+            let mut parent = parent.write().unwrap();
+            let dir = parent.get_directory_mut()?;
+
+            match dir.entries.entry(name) {
+                Entry::Vacant(_) => Err(libc::ENOENT.into()),
+                Entry::Occupied(e) => {
+                    let child_ino = *e.get();
+                    let child = state.superblock.get_inode(child_ino)?;
+                    let child = child.read().unwrap();
+
+                    if let Contents::Directory(dir) = &child.contents {
+                        if dir.entries.is_empty() {
+                            e.remove_entry();
+                            Ok(())
+                        } else {
+                            Err(libc::ENOTEMPTY.into())
+                        }
+                    } else {
+                        Err(libc::ENOTDIR.into())
+                    }
+                }
+            }
+        });
     }
 
     fn symlink(
         &mut self,
-        _req: &Request,
-        _parent: u64,
-        _name: &OsStr,
-        _link: &Path,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        link: &Path,
         reply: fuse::ReplyEntry,
     ) {
-        reply.error(libc::EROFS);
+        let state = Arc::clone(&self.state);
+        let name: String = name.to_str().unwrap().to_string();
+        let target: String = link.to_str().unwrap().to_string();
+        let uid = req.uid();
+        let gid = req.gid();
+
+        wrap_entry(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let parent = state.superblock.get_inode(parent)?;
+            let mut parent = parent.write().unwrap();
+            let dir = parent.get_directory_mut()?;
+
+            dir.check_no_entry(&name)?;
+
+            let inode = Inode {
+                perm: 0o777,
+                uid,
+                gid,
+                ..Inode::new(Contents::Symlink(crate::fs::Symlink::new(target)))
+            };
+
+            let mut attr: fuse::FileAttr = (&inode).into();
+            let ino = state.superblock.add_inode(inode);
+            dir.entries.insert(name, ino);
+            attr.ino = ino;
+
+            Ok(crate::fuse_util::EntryOk {
+                ttl: Duration::from_secs(60),
+                attr,
+                generation: GENERATION_COUNT.fetch_add(1, Ordering::Relaxed),
+            })
+        });
     }
 
     fn rename(
         &mut self,
         _req: &Request,
-        _parent: u64,
-        _name: &OsStr,
-        _newparent: u64,
-        _newname: &OsStr,
+        parent_ino: u64,
+        name: &OsStr,
+        new_parent_ino: u64,
+        new_name: &OsStr,
         reply: ReplyEmpty,
     ) {
-        reply.error(libc::EROFS);
+        let state = Arc::clone(&self.state);
+        let name: String = name.to_str().unwrap().to_string();
+        let new_name: String = new_name.to_str().unwrap().to_string();
+
+        wrap_empty(&self.executor, reply, async move {
+            let state = &mut *state.write().unwrap();
+            let parent = state.superblock.get_inode(parent_ino)?;
+            let mut parent = parent.write().unwrap();
+            let dir = parent.get_directory_mut()?;
+
+            let ino = dir.get_entry(&name)?;
+
+            // ugly
+            if parent_ino == new_parent_ino {
+                dir.check_no_entry(&new_name)?;
+                dir.entries.remove(&name);
+                dir.entries.insert(new_name, ino);
+            } else {
+                let new_parent = state.superblock.get_inode(new_parent_ino)?;
+                let mut new_parent = new_parent.write().unwrap();
+                let new_dir = new_parent.get_directory_mut()?;
+
+                new_dir.check_no_entry(&new_name)?;
+
+                dir.entries.remove(&name);
+                new_dir.entries.insert(new_name, ino);
+            }
+
+            Ok(())
+        });
     }
 
     fn link(
@@ -246,7 +430,7 @@ impl fuse::Filesystem for Filesystem {
         _newname: &OsStr,
         reply: fuse::ReplyEntry,
     ) {
-        reply.error(libc::EROFS);
+        reply.error(libc::ENOTSUP);
     }
 
     fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: fuse::ReplyOpen) {
@@ -356,7 +540,7 @@ impl fuse::Filesystem for Filesystem {
     ) {
         let state = Arc::clone(&self.state);
 
-        wrap_release(&self.executor, reply, async move {
+        wrap_empty(&self.executor, reply, async move {
             let (inode, mutable_file) = {
                 let state = &mut *state.write().unwrap();
                 if let Some(open_file) = state.file_handles.remove(&fh) {
@@ -470,7 +654,23 @@ impl fuse::Filesystem for Filesystem {
     }
 
     fn statfs(&mut self, _req: &Request, _ino: u64, reply: fuse::ReplyStatfs) {
-        reply.error(libc::ENOTSUP);
+        let state = self.state.read().unwrap();
+        let bsize = 1 << 15;
+        let cur_bytes = state.superblock.total_file_size();
+        let cur_blocks = cur_bytes / (bsize as u64);
+        let free_blocks = 1 << 35;
+        let nr_inodes = state.superblock.nr_inodes();
+        let free_inodes = 1 << 24;
+        reply.statfs(
+            cur_blocks + free_blocks, // blocks
+            free_blocks,              // bfree,
+            free_blocks,              // bavail,
+            nr_inodes + free_inodes,  // files
+            free_inodes,              // ffree,
+            bsize,                    // bsize
+            255,                      // namelen
+            bsize,                    // frsize,
+        );
     }
 
     fn setxattr(
@@ -538,33 +738,31 @@ impl fuse::Filesystem for Filesystem {
             let mut parent = parent.write().unwrap();
             let dir = parent.get_directory_mut()?;
 
-            if let Some(_) = dir.entries.get(&name) {
-                Err(libc::EEXIST.into())
-            } else {
-                let inode = Inode {
-                    perm: mode & 0o7777,
-                    uid,
-                    gid,
-                    ..Inode::new(Contents::MutableFile(Arc::new(crate::fs::MutableFile {
-                        file: mutable_file,
-                    })))
-                };
+            dir.check_no_entry(&name)?;
 
-                let mut attr: fuse::FileAttr = (&inode).into();
-                let ino = state.superblock.add_inode(inode);
-                dir.entries.insert(name, ino);
-                attr.ino = ino;
+            let inode = Inode {
+                perm: mode & 0o7777,
+                uid,
+                gid,
+                ..Inode::new(Contents::MutableFile(Arc::new(crate::fs::MutableFile {
+                    file: mutable_file,
+                })))
+            };
 
-                let fh = state.new_file_handle(OpenFile::new(state.superblock.get_inode(ino)?));
+            let mut attr: fuse::FileAttr = (&inode).into();
+            let ino = state.superblock.add_inode(inode);
+            dir.entries.insert(name, ino);
+            attr.ino = ino;
 
-                Ok(crate::fuse_util::CreateOk {
-                    ttl: Duration::from_secs(60),
-                    attr,
-                    generation: GENERATION_COUNT.fetch_add(1, Ordering::Relaxed),
-                    fh,
-                    flags: 0, // FIXME
-                })
-            }
+            let fh = state.new_file_handle(OpenFile::new(state.superblock.get_inode(ino)?));
+
+            Ok(crate::fuse_util::CreateOk {
+                ttl: Duration::from_secs(60),
+                attr,
+                generation: GENERATION_COUNT.fetch_add(1, Ordering::Relaxed),
+                fh,
+                flags: 0, // FIXME
+            })
         });
     }
 

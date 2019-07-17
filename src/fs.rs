@@ -22,6 +22,22 @@ impl From<&Time> for SystemTime {
     }
 }
 
+impl From<SystemTime> for Time {
+    fn from(time: SystemTime) -> Self {
+        Time(time.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64)
+    }
+}
+
+impl Time {
+    pub fn from_nanos(secs: i64, nsecs: i64) -> Self {
+        Time(secs * 1000000000 + nsecs)
+    }
+
+    pub fn now() -> Self {
+        SystemTime::now().into()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Superblock {
     inodes: HashMap<Ino, Arc<RwLock<Inode>>>,
@@ -53,6 +69,22 @@ impl Superblock {
         };
         ino
     }
+
+    pub fn nr_inodes(&self) -> u64 {
+        self.inodes.len() as u64
+    }
+
+    pub fn total_file_size(&self) -> u64 {
+        // FIXME: maintain in superblock
+        let mut total = 0u64;
+        for file in self.inodes.values() {
+            let file = file.read().unwrap();
+            if let Contents::RegularFile(file) = &file.contents {
+                total += file.length;
+            }
+        }
+        total
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,7 +101,7 @@ pub struct Inode {
 
 impl Inode {
     pub fn new(contents: Contents) -> Inode {
-        let now = cur_time();
+        let now = Time::now();
         Inode {
             ino: 0,
             perm: 0,
@@ -116,6 +148,26 @@ pub struct Directory {
     pub entries: BTreeMap<String, Ino>, // FIXME: include type?
 }
 
+impl Directory {
+    pub fn new() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_entry(&self, name: &str) -> Result<Ino> {
+        self.entries.get(name).map(|x| *x).ok_or(Error::NoSuchEntry)
+    }
+
+    pub fn check_no_entry(&self, name: &str) -> Result<()> {
+        if self.entries.contains_key(name) {
+            Err(Error::EntryExists)
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegularFile {
     pub length: u64,
@@ -125,6 +177,12 @@ pub struct RegularFile {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Symlink {
     pub target: String,
+}
+
+impl Symlink {
+    pub fn new(target: String) -> Self {
+        Self { target }
+    }
 }
 
 pub struct MutableFile {
@@ -155,16 +213,6 @@ impl<'de> serde::Deserialize<'de> for MutableFile {
             "cannot deserialize a mutable file",
         ))
     }
-}
-
-pub fn cur_time() -> Time {
-    Time(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            * 1000000000,
-    )
 }
 
 impl Superblock {
@@ -244,7 +292,7 @@ impl Superblock {
             perm: st.mode() & 0o7777,
             uid: st.uid(),
             gid: st.gid(),
-            mtime: Time(st.mtime() * 1000000000 + st.mtime_nsec()),
+            mtime: Time::from_nanos(st.mtime(), st.mtime_nsec()),
             ..Inode::new(contents)
         })
     }
