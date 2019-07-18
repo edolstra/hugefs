@@ -62,6 +62,7 @@ impl FilesystemState {
 struct OpenFile {
     inode: Arc<RwLock<Inode>>,
     prev_dir_entry: Option<String>,
+    for_writing: bool,
 }
 
 impl OpenFile {
@@ -69,6 +70,7 @@ impl OpenFile {
         OpenFile {
             inode,
             prev_dir_entry: None,
+            for_writing: false,
         }
     }
 }
@@ -544,6 +546,9 @@ impl fuse::Filesystem for Filesystem {
             let (inode, mutable_file) = {
                 let state = &mut *state.write().unwrap();
                 if let Some(open_file) = state.file_handles.remove(&fh) {
+                    if !open_file.for_writing {
+                        return Ok(());
+                    }
                     let mut inode = open_file.inode.write().unwrap();
                     if let Contents::MutableFile(file) = &mut inode.contents {
                         (Arc::clone(&open_file.inode), Arc::clone(file))
@@ -754,7 +759,9 @@ impl fuse::Filesystem for Filesystem {
             dir.entries.insert(name, ino);
             attr.ino = ino;
 
-            let fh = state.new_file_handle(OpenFile::new(state.superblock.get_inode(ino)?));
+            let mut open_file = OpenFile::new(state.superblock.get_inode(ino)?);
+            open_file.for_writing = true;
+            let fh = state.new_file_handle(open_file);
 
             Ok(crate::fuse_util::CreateOk {
                 ttl: Duration::from_secs(60),
