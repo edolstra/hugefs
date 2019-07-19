@@ -1,0 +1,20 @@
+{
+    "inputs": {
+        "github:edolstra/import-cargo": {
+            "id": "import-cargo",
+            "inputs": {},
+            "narHash": "sha256-OymzyduYP3zayQn2NrBSeKOQW7tTwKUWc/ayMq+UN4Q=",
+            "nonFlakeInputs": {},
+            "uri": "github:edolstra/import-cargo/f4ffb9360aa8186d56ed0e0e4d923454ffc7f188"
+        },
+        "nixpkgs": {
+            "id": "nixpkgs",
+            "inputs": {},
+            "narHash": "sha256-FT67aNIBUZU4Al/eA1VVIj4R9NuAqeoofJ//AaEwWds=",
+            "nonFlakeInputs": {},
+            "uri": "github:edolstra/nixpkgs/7998e43f72a7652514b226d7bafe89b93a93649c"
+        }
+    },
+    "nonFlakeInputs": {},
+    "version": 2
+}
