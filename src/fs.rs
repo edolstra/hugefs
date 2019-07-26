@@ -279,11 +279,12 @@ impl Superblock {
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
                 let file = self.import_file(&entry.path(), store)?;
-                let file_ino = file.ino;
-                self.inodes.insert(file.ino, Arc::new(RwLock::new(file)));
+                let file_ino = self.add_inode(file);
                 entries.insert(entry.file_name().into_string().unwrap(), file_ino);
             }
             Contents::Directory(Directory { entries })
+        } else if st.file_type().is_symlink() {
+            Contents::Symlink(Symlink::new(fs::read_link(path)?.into_os_string().into_string().unwrap()))
         } else {
             panic!("unsupported file type");
         };
