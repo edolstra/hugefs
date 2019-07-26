@@ -37,11 +37,6 @@
 
         src = if isShell then null else inputs.self;
 
-        # FIXME
-        postHook = lib.optionalString isShell ''
-          unset CARGO_HOME
-        '';
-
         RUSTC_BOOTSTRAP = "1";
 
         buildPhase = "cargo build --release --frozen --offline";
