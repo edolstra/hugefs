@@ -1,7 +1,7 @@
 {
   name = "hugefs";
 
-  epoch = 201906;
+  edition = 201906;
 
   description = "A content-addressable archival filesystem";
 
