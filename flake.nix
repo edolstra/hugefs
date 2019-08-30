@@ -1,23 +1,18 @@
 {
-  name = "hugefs";
-
-  edition = 201906;
+  edition = 201909;
 
   description = "A content-addressable archival filesystem";
 
-  inputs =
-    [ "nixpkgs"
-      github:edolstra/import-cargo
-    ];
+  inputs.import-cargo.uri = "github:edolstra/import-cargo";
 
-  outputs = inputs:
-    with import inputs.nixpkgs { system = "x86_64-linux"; };
+  outputs = { self, nixpkgs, import-cargo }:
+    with import nixpkgs { system = "x86_64-linux"; };
     with pkgs;
 
     rec {
 
       builders.buildPackage = { isShell }: stdenv.mkDerivation {
-        name = "hugefs-${lib.substring 0 8 inputs.self.lastModified}-${inputs.self.shortRev or "0000000"}";
+        name = "hugefs-${lib.substring 0 8 self.lastModified}-${self.shortRev or "0000000"}";
 
         buildInputs =
           [ rustc
@@ -29,13 +24,13 @@
           ] ++ (if isShell then [
             rustfmt
           ] else [
-            (inputs.import-cargo.builders.importCargo {
+            (import-cargo.builders.importCargo {
               lockFile = ./Cargo.lock;
               inherit pkgs;
             }).cargoHome
           ]);
 
-        src = if isShell then null else inputs.self;
+        src = if isShell then null else self;
 
         RUSTC_BOOTSTRAP = "1";
 
