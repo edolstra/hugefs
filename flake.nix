@@ -9,9 +9,9 @@
     with import nixpkgs { system = "x86_64-linux"; };
     with pkgs;
 
-    rec {
+    let
 
-      builders.buildPackage = { isShell }: stdenv.mkDerivation {
+      buildPackage = { isShell }: stdenv.mkDerivation {
         name = "hugefs-${lib.substring 0 8 self.lastModified}-${self.shortRev or "0000000"}";
 
         buildInputs =
@@ -48,11 +48,13 @@
           '';
       };
 
-      defaultPackage = builders.buildPackage { isShell = false; };
+    in {
 
-      checks.build = defaultPackage;
+      defaultPackage.x86_64-linux = buildPackage { isShell = false; };
 
-      devShell = builders.buildPackage { isShell = true; };
+      checks.x86_64-linux.build = self.defaultPackage.x86_64-linux;
+
+      devShell.x86_64-linux = buildPackage { isShell = true; };
 
     };
 }

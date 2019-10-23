@@ -3,14 +3,14 @@
         "import-cargo": {
             "inputs": {},
             "narHash": "sha256-wIXWOpX9rRjK5NDsL6WzuuBJl2R0kUCnlpZUrASykSc=",
-            "originalUri": "github:edolstra/import-cargo",
-            "uri": "github:edolstra/import-cargo/8abf7b3a8cbe1c8a885391f826357a74d382a422"
+            "originalUrl": "github:edolstra/import-cargo",
+            "url": "github:edolstra/import-cargo/8abf7b3a8cbe1c8a885391f826357a74d382a422"
         },
         "nixpkgs": {
             "inputs": {},
-            "narHash": "sha256-TihXG4a/BvWEe2gW8r1SBm2TIjNF6dMIchDQBT99mT8=",
-            "originalUri": "nixpkgs",
-            "uri": "github:edolstra/nixpkgs/0a4dd6e541db036e9d80f481f8c38a7537428c7b"
+            "narHash": "sha256-ALTr2z3J1mE/2OAuEIALIq5pxgADfKvq7rF7gqxT4c0=",
+            "originalUrl": "nixpkgs",
+            "url": "github:edolstra/nixpkgs/bcceb882ccdfa818c1e18f4c1e88f2db68964305"
         }
     },
     "version": 3
