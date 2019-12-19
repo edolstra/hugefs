@@ -40,7 +40,7 @@ impl Store for S3Store {
         assert!(size > 0);
         let key = self.key_for_hash(file_hash);
         debug!("GET s3://{}/{}", self.bucket_name, key);
-        async move {
+        Box::pin(async move {
             match self
                 .s3_client
                 .get_object(GetObjectRequest {
@@ -62,7 +62,6 @@ impl Store for S3Store {
                 }
                 Err(err) => panic!(err), // FIXME
             }
-        }
-            .boxed()
+        })
     }
 }

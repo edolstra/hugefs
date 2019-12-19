@@ -284,7 +284,9 @@ impl Superblock {
             }
             Contents::Directory(Directory { entries })
         } else if st.file_type().is_symlink() {
-            Contents::Symlink(Symlink::new(fs::read_link(path)?.into_os_string().into_string().unwrap()))
+            Contents::Symlink(Symlink::new(
+                fs::read_link(path)?.into_os_string().into_string().unwrap(),
+            ))
         } else {
             panic!("unsupported file type");
         };

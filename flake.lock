@@ -8,9 +8,9 @@
         },
         "nixpkgs": {
             "inputs": {},
-            "narHash": "sha256-ALTr2z3J1mE/2OAuEIALIq5pxgADfKvq7rF7gqxT4c0=",
-            "originalUrl": "nixpkgs",
-            "url": "github:edolstra/nixpkgs/bcceb882ccdfa818c1e18f4c1e88f2db68964305"
+            "narHash": "sha256-NB+H7zK3BB//zM127FqgbG4iAfY+nS/IOyO+uGWA5Ho=",
+            "originalUrl": "github:edolstra/nixpkgs",
+            "url": "github:edolstra/nixpkgs/7845bf5f4b3013df1cf036e9c9c3a55a30331db9"
         }
     },
     "version": 3

@@ -1,12 +1,12 @@
 use crate::hash::Hash;
 use crate::store::{Future, MutableStore, Store};
-use futures::{compat::Future01CompatExt, future::FutureExt};
 use log::debug;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct LocalStore {
     root: PathBuf,
@@ -38,6 +38,17 @@ fn path_for_hash(root: impl Into<PathBuf>, file_hash: &Hash) -> PathBuf {
     path
 }
 
+async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(from: &mut R, mut buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut n = 0;
+    while !buf.is_empty() {
+        let n2 = from.read(buf).await?;
+        if n2 == 0 { break; }
+        n += n2;
+        buf = &mut buf[n2..];
+    }
+    Ok(n)
+}
+
 impl Store for LocalStore {
     fn add(&self, data: &[u8]) -> std::io::Result<Hash> {
         let (_, hash) = Hash::hash(data)?;
@@ -62,18 +73,16 @@ impl Store for LocalStore {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>>
     {
         let file_hash = file_hash.clone();
-        async move {
+        Box::pin(async move {
             let path = path_for_hash(&self.root, &file_hash);
-            let file = tokio::fs::File::open(path).compat().await?;
-            let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
-            let (_, mut buf, n) = tokio::io::read(file, vec![0; size as usize])
-                .compat()
-                .await?;
+            let mut file = tokio::fs::File::open(path).await?;
+            file.seek(std::io::SeekFrom::Start(offset)).await?;
+            let mut buf = vec![0u8; size as usize];
+            let n = read_n(&mut file, &mut buf).await?;
             assert!(n <= size as usize);
             buf.resize(n, 0);
             Ok(buf)
-        }
-            .boxed()
+        })
     }
 }
 
@@ -92,14 +101,13 @@ impl Drop for MutableFile {
 
 impl MutableStore for LocalStore {
     fn create_file<'a>(&'a self) -> Future<'a, Box<dyn crate::store::MutableFile>> {
-        async move {
+        Box::pin(async move {
             let temp_path = self.make_temp_path();
             let file = tokio::fs::OpenOptions::new()
                 .create_new(true)
                 .read(true)
                 .write(true)
                 .open(temp_path.clone())
-                .compat()
                 .await?;
             let handle: Box<dyn crate::store::MutableFile> = Box::new(MutableFile {
                 temp_path,
@@ -107,18 +115,17 @@ impl MutableStore for LocalStore {
                 len: AtomicU64::new(0),
             });
             Ok(handle)
-        }
-            .boxed()
+        })
     }
 }
 
 impl crate::store::MutableFile for MutableFile {
     fn write<'a>(&'a self, offset: u64, data: &'a [u8]) -> Future<'a, ()> {
-        async move {
+        Box::pin(async move {
             let mut file_lock = self.file.lock().await;
-            if let Some(file) = file_lock.take() {
-                let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
-                let (file, _) = tokio::io::write_all(file, data).compat().await?;
+            if let Some(mut file) = file_lock.take() {
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                file.write_all(data).await?;
                 *file_lock = Some(file);
                 self.len
                     .fetch_max(offset + data.len() as u64, Ordering::Relaxed);
@@ -126,18 +133,16 @@ impl crate::store::MutableFile for MutableFile {
             } else {
                 panic!("write handle invalidated by previous write error") // FIXME: return error
             }
-        }
-            .boxed()
+        })
     }
 
     fn read<'a>(&'a self, offset: u64, size: u32) -> Future<'a, Vec<u8>> {
-        async move {
+        Box::pin(async move {
             let mut file_lock = self.file.lock().await;
-            if let Some(file) = file_lock.take() {
-                let (file, _) = file.seek(std::io::SeekFrom::Start(offset)).compat().await?;
-                let (file, mut buf, n) = tokio::io::read(file, vec![0; size as usize])
-                    .compat()
-                    .await?;
+            if let Some(mut file) = file_lock.take() {
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                let mut buf = vec![0u8; size as usize];
+                let n = read_n(&mut file, &mut buf).await?; // FIXME
                 *file_lock = Some(file);
                 assert!(n <= size as usize);
                 buf.resize(n, 0);
@@ -145,32 +150,29 @@ impl crate::store::MutableFile for MutableFile {
             } else {
                 panic!("write handle invalidated by previous write error") // FIXME: return error
             }
-        }
-            .boxed()
+        })
     }
 
     fn finish<'a>(&'a self) -> Future<'a, (u64, Hash)> {
-        async move {
+        Box::pin(async move {
             let mut file_lock = self.file.lock().await;
-            if let Some(file) = file_lock.take() {
-                let (file, _) = file.seek(std::io::SeekFrom::Start(0)).compat().await?;
-                let (len, hash) = Hash::hash(file)?; // FIXME: this can block
+            if let Some(mut file) = file_lock.take() {
+                file.seek(std::io::SeekFrom::Start(0)).await?;
+                // FIXME: make this async and in bounded memory
+                let mut buf = vec![];
+                file.read_to_end(&mut buf).await?;
+                let (len, hash) = Hash::hash(&buf[..])?;
                 let final_path = path_for_hash(self.temp_path.clone().parent().unwrap(), &hash);
                 if final_path.exists() {
-                    tokio::fs::remove_file(self.temp_path.clone())
-                        .compat()
-                        .await?;
+                    tokio::fs::remove_file(self.temp_path.clone()).await?;
                 } else {
-                    tokio::fs::rename(self.temp_path.clone(), final_path)
-                        .compat()
-                        .await?;
+                    tokio::fs::rename(self.temp_path.clone(), final_path).await?;
                 }
                 Ok((len, hash))
             } else {
                 panic!("write handle invalidated by previous write error") // FIXME: return error
             }
-        }
-            .boxed()
+        })
     }
 
     fn len(&self) -> u64 {

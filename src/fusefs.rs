@@ -113,13 +113,13 @@ impl From<&Inode> for fuse::FileAttr {
 
 pub struct Filesystem {
     state: Arc<RwLock<FilesystemState>>,
-    executor: tokio::runtime::TaskExecutor,
+    executor: tokio::runtime::Handle,
 }
 
 impl Filesystem {
     pub fn new(
         state: Arc<RwLock<FilesystemState>>,
-        executor: tokio::runtime::TaskExecutor,
+        executor: tokio::runtime::Handle,
     ) -> Self {
         Filesystem { state, executor }
     }
@@ -476,7 +476,10 @@ impl fuse::Filesystem for Filesystem {
                 File::Regular(hash) => {
                     let store = Arc::clone(&state.read().unwrap().store);
                     match store.get(&hash, offset as u64, size).await {
-                        Ok(data) => return Ok(data),
+                        Ok(data) => {
+                            println!("READ {} {}", size, data.len());
+                            return Ok(data);
+                        }
                         Err(err) => {
                             error!("Error reading file {}: {}", ino, err);
                             return Err(libc::EIO.into());

@@ -4,6 +4,7 @@
   description = "A content-addressable archival filesystem";
 
   inputs.import-cargo.uri = "github:edolstra/import-cargo";
+  inputs.nixpkgs.uri = "github:edolstra/nixpkgs";
 
   outputs = { self, nixpkgs, import-cargo }:
     with import nixpkgs { system = "x86_64-linux"; };

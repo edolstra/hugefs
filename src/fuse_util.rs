@@ -1,5 +1,4 @@
 use fuse::FileAttr;
-use futures::{FutureExt, TryFutureExt};
 use libc::c_int;
 use std::time::Duration;
 
@@ -16,7 +15,7 @@ impl From<c_int> for FuseError {
 }
 
 pub fn wrap_attr(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyAttr,
     fut: impl std::future::Future<Output = Result<(Duration, FileAttr)>> + Send + 'static,
 ) {
@@ -27,9 +26,6 @@ pub fn wrap_attr(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
 
@@ -40,7 +36,7 @@ pub struct EntryOk {
 }
 
 pub fn wrap_entry(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyEntry,
     fut: impl std::future::Future<Output = Result<EntryOk>> + Send + 'static,
 ) {
@@ -51,14 +47,11 @@ pub fn wrap_entry(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
 
 pub fn wrap_read(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyData,
     fut: impl std::future::Future<Output = Result<Vec<u8>>> + Send + 'static,
 ) {
@@ -69,14 +62,11 @@ pub fn wrap_read(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
 
 pub fn wrap_write(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyWrite,
     fut: impl std::future::Future<Output = Result<u32>> + Send + 'static,
 ) {
@@ -87,14 +77,11 @@ pub fn wrap_write(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
 
 pub fn wrap_empty(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyEmpty,
     fut: impl std::future::Future<Output = Result<()>> + Send + 'static,
 ) {
@@ -105,9 +92,6 @@ pub fn wrap_empty(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
 
@@ -120,7 +104,7 @@ pub struct CreateOk {
 }
 
 pub fn wrap_create(
-    executor: &tokio::runtime::TaskExecutor,
+    executor: &tokio::runtime::Handle,
     reply: fuse::ReplyCreate,
     fut: impl std::future::Future<Output = Result<CreateOk>> + Send + 'static,
 ) {
@@ -133,8 +117,5 @@ pub fn wrap_create(
                 Err(err) => reply.error(err.0),
             }
         }
-            .unit_error()
-            .boxed()
-            .compat(),
     );
 }
