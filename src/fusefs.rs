@@ -2,7 +2,6 @@ use crate::error::{Error, Result};
 use crate::fs::{Contents, Inode, Superblock};
 use crate::fuse_util::*;
 use crate::hash::Hash;
-use crate::store::MutableStore;
 use fuse::{ReplyEmpty, Request};
 use libc::c_int;
 use log::{debug, error};
@@ -17,7 +16,7 @@ use std::sync::{
 };
 use std::time::{Duration, SystemTime};
 
-type Store = Arc<dyn MutableStore>;
+type Store = Arc<dyn crate::store::Store>;
 
 pub struct FilesystemState {
     superblock: Superblock,
@@ -117,10 +116,7 @@ pub struct Filesystem {
 }
 
 impl Filesystem {
-    pub fn new(
-        state: Arc<RwLock<FilesystemState>>,
-        executor: tokio::runtime::Handle,
-    ) -> Self {
+    pub fn new(state: Arc<RwLock<FilesystemState>>, executor: tokio::runtime::Handle) -> Self {
         Filesystem { state, executor }
     }
 }
@@ -476,10 +472,7 @@ impl fuse::Filesystem for Filesystem {
                 File::Regular(hash) => {
                     let store = Arc::clone(&state.read().unwrap().store);
                     match store.get(&hash, offset as u64, size).await {
-                        Ok(data) => {
-                            println!("READ {} {}", size, data.len());
-                            return Ok(data);
-                        }
+                        Ok(data) => return Ok(data),
                         Err(err) => {
                             error!("Error reading file {}: {}", ino, err);
                             return Err(libc::EIO.into());
@@ -735,10 +728,11 @@ impl fuse::Filesystem for Filesystem {
         // FIXME: check flags
 
         wrap_create(&self.executor, reply, async move {
-            // FIXME: this create a file even if creation fails.
+            // FIXME: this creates a file even if creation fails.
             let mutable_file = {
                 let store = Arc::clone(&state.read().unwrap().store);
-                store.create_file().await.unwrap()
+                let fut = store.create_file().ok_or(libc::EROFS)?;
+                fut.await.unwrap()
             };
 
             let state = &mut *state.write().unwrap();

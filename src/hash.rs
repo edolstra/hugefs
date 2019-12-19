@@ -2,7 +2,7 @@ use blake2::Digest;
 use std::fmt::Write;
 
 #[derive(Clone)]
-pub struct Hash([u8; 64]);
+pub struct Hash(pub [u8; 64]);
 
 impl Hash {
     pub fn hash<R: std::io::Read>(mut r: R) -> std::io::Result<(u64, Self)> {

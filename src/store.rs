@@ -9,10 +9,8 @@ pub trait Store: Send + Sync {
     fn add(&self, data: &[u8]) -> Result<Hash>;
 
     fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> Future<'a, Vec<u8>>;
-}
 
-pub trait MutableStore: Store + Send + Sync {
-    fn create_file<'a>(&'a self) -> Future<'a, Box<dyn MutableFile>>;
+    fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn MutableFile>>>;
 }
 
 pub trait MutableFile: Send + Sync {

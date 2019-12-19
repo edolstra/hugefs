@@ -1,5 +1,5 @@
 use crate::hash::Hash;
-use crate::store::{Future, MutableStore, Store};
+use crate::store::{Future, Store};
 use log::debug;
 use std::io::Write;
 use std::path::PathBuf;
@@ -38,11 +38,16 @@ fn path_for_hash(root: impl Into<PathBuf>, file_hash: &Hash) -> PathBuf {
     path
 }
 
-async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(from: &mut R, mut buf: &mut [u8]) -> std::io::Result<usize> {
+async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(
+    from: &mut R,
+    mut buf: &mut [u8],
+) -> std::io::Result<usize> {
     let mut n = 0;
     while !buf.is_empty() {
         let n2 = from.read(buf).await?;
-        if n2 == 0 { break; }
+        if n2 == 0 {
+            break;
+        }
         n += n2;
         buf = &mut buf[n2..];
     }
@@ -84,24 +89,9 @@ impl Store for LocalStore {
             Ok(buf)
         })
     }
-}
 
-struct MutableFile {
-    temp_path: PathBuf,
-    file: futures::lock::Mutex<Option<tokio::fs::File>>,
-    len: AtomicU64,
-}
-
-impl Drop for MutableFile {
-    fn drop(&mut self) {
-        // FIXME: only do this when necessary
-        let _ = std::fs::remove_file(&self.temp_path);
-    }
-}
-
-impl MutableStore for LocalStore {
-    fn create_file<'a>(&'a self) -> Future<'a, Box<dyn crate::store::MutableFile>> {
-        Box::pin(async move {
+    fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn crate::store::MutableFile>>> {
+        Some(Box::pin(async move {
             let temp_path = self.make_temp_path();
             let file = tokio::fs::OpenOptions::new()
                 .create_new(true)
@@ -115,7 +105,20 @@ impl MutableStore for LocalStore {
                 len: AtomicU64::new(0),
             });
             Ok(handle)
-        })
+        }))
+    }
+}
+
+struct MutableFile {
+    temp_path: PathBuf,
+    file: futures::lock::Mutex<Option<tokio::fs::File>>,
+    len: AtomicU64,
+}
+
+impl Drop for MutableFile {
+    fn drop(&mut self) {
+        // FIXME: only do this when necessary
+        let _ = std::fs::remove_file(&self.temp_path);
     }
 }
 

@@ -19,14 +19,12 @@ pub fn wrap_attr(
     reply: fuse::ReplyAttr,
     fut: impl std::future::Future<Output = Result<(Duration, FileAttr)>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(attr) => reply.attr(&attr.0, &attr.1),
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(attr) => reply.attr(&attr.0, &attr.1),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
 
 pub struct EntryOk {
@@ -40,14 +38,12 @@ pub fn wrap_entry(
     reply: fuse::ReplyEntry,
     fut: impl std::future::Future<Output = Result<EntryOk>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(entry) => reply.entry(&entry.ttl, &entry.attr, entry.generation),
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(entry) => reply.entry(&entry.ttl, &entry.attr, entry.generation),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
 
 pub fn wrap_read(
@@ -55,14 +51,12 @@ pub fn wrap_read(
     reply: fuse::ReplyData,
     fut: impl std::future::Future<Output = Result<Vec<u8>>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(data) => reply.data(&data),
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(data) => reply.data(&data),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
 
 pub fn wrap_write(
@@ -70,14 +64,12 @@ pub fn wrap_write(
     reply: fuse::ReplyWrite,
     fut: impl std::future::Future<Output = Result<u32>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(n) => reply.written(n),
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(n) => reply.written(n),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
 
 pub fn wrap_empty(
@@ -85,14 +77,12 @@ pub fn wrap_empty(
     reply: fuse::ReplyEmpty,
     fut: impl std::future::Future<Output = Result<()>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(()) => reply.ok(),
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(()) => reply.ok(),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
 
 pub struct CreateOk {
@@ -108,14 +98,10 @@ pub fn wrap_create(
     reply: fuse::ReplyCreate,
     fut: impl std::future::Future<Output = Result<CreateOk>> + Send + 'static,
 ) {
-    executor.spawn(
-        async {
-            match fut.await {
-                Ok(data) => {
-                    reply.created(&data.ttl, &data.attr, data.generation, data.fh, data.flags)
-                }
-                Err(err) => reply.error(err.0),
-            }
+    executor.spawn(async {
+        match fut.await {
+            Ok(data) => reply.created(&data.ttl, &data.attr, data.generation, data.fh, data.flags),
+            Err(err) => reply.error(err.0),
         }
-    );
+    });
 }
