@@ -1,6 +1,7 @@
+use crate::error::Error;
 use crate::hash::Hash;
 
-pub type Result<T> = std::io::Result<T>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub type Future<'a, Res> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Res>> + Send + 'a>>;

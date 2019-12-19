@@ -23,15 +23,16 @@ fn main() -> Result<(), std::io::Error> {
 
     let rt = Runtime::new().unwrap();
 
-    //let store = local_store::LocalStore::new("/data/local-store".into()).unwrap();
-    let store = local_store::LocalStore::new("/tmp/encrypted-store".into()).unwrap();
+    let local_store = local_store::LocalStore::new("/data/local-store".into()).unwrap();
     //let store = s3_store::S3Store::open("hugefs");
 
     let mut key = vec![];
     File::open("key")?.read_to_end(&mut key)?;
 
-    let store =
-        encrypted_store::EncryptedStore::new(Arc::new(store), GenericArray::clone_from_slice(&key));
+    let encrypted_store = encrypted_store::EncryptedStore::new(
+        Arc::new(local_store::LocalStore::new("/tmp/encrypted-store".into()).unwrap()),
+        GenericArray::clone_from_slice(&key),
+    );
 
     let json_state = Path::new("/tmp/fs.json");
 
@@ -43,7 +44,10 @@ fn main() -> Result<(), std::io::Error> {
 
     let fs_state = Arc::new(RwLock::new(fusefs::FilesystemState::new(
         superblock,
-        std::sync::Arc::new(store),
+        vec![
+            std::sync::Arc::new(encrypted_store),
+            std::sync::Arc::new(local_store),
+        ],
     )));
 
     let fs = fusefs::Filesystem::new(Arc::clone(&fs_state), rt.handle().clone());

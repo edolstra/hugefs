@@ -1,5 +1,6 @@
+use crate::error::Error;
 use crate::hash::Hash;
-use crate::store::{Future, Store};
+use crate::store::{Future, Result, Store};
 use log::debug;
 use std::io::Write;
 use std::path::PathBuf;
@@ -55,7 +56,7 @@ async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(
 }
 
 impl Store for LocalStore {
-    fn add(&self, data: &[u8]) -> std::io::Result<Hash> {
+    fn add(&self, data: &[u8]) -> Result<Hash> {
         let (_, hash) = Hash::hash(data)?;
 
         let path = path_for_hash(&self.root, &hash);
@@ -75,12 +76,17 @@ impl Store for LocalStore {
         file_hash: &Hash,
         offset: u64,
         size: u32,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Vec<u8>>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send + 'a>> {
         let file_hash = file_hash.clone();
         Box::pin(async move {
             let path = path_for_hash(&self.root, &file_hash);
-            let mut file = tokio::fs::File::open(path).await?;
+            let mut file = tokio::fs::File::open(path).await.map_err(|err| {
+                if err.kind() == std::io::ErrorKind::NotFound {
+                    Error::NoSuchHash(file_hash.clone())
+                } else {
+                    Error::StorageError(Box::new(err))
+                }
+            })?;
             file.seek(std::io::SeekFrom::Start(offset)).await?;
             let mut buf = vec![0u8; size as usize];
             let n = read_n(&mut file, &mut buf).await?;

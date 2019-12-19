@@ -245,7 +245,7 @@ impl Superblock {
         serde_json::ser::to_writer(file, &self)
     }
 
-    pub fn import<S: Store>(&mut self, path: &Path, store: &mut S) -> std::io::Result<()> {
+    pub fn import<S: Store>(&mut self, path: &Path, store: &mut S) -> crate::store::Result<()> {
         let file = self.import_file(path, store)?;
         let file_ino = self.add_inode(file);
 
@@ -264,7 +264,7 @@ impl Superblock {
         Ok(())
     }
 
-    fn import_file<S: Store>(&mut self, path: &Path, store: &mut S) -> std::io::Result<Inode> {
+    fn import_file<S: Store>(&mut self, path: &Path, store: &mut S) -> crate::store::Result<Inode> {
         let st = fs::symlink_metadata(path)?;
 
         let contents = if st.file_type().is_file() {

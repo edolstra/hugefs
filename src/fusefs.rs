@@ -2,6 +2,7 @@ use crate::error::{Error, Result};
 use crate::fs::{Contents, Inode, Superblock};
 use crate::fuse_util::*;
 use crate::hash::Hash;
+use crate::store::MutableFile;
 use fuse::{ReplyEmpty, Request};
 use libc::c_int;
 use log::{debug, error};
@@ -22,16 +23,16 @@ pub struct FilesystemState {
     superblock: Superblock,
     file_handles: HashMap<u64, OpenFile>,
     next_fh: u64,
-    store: Store,
+    stores: Vec<Store>,
 }
 
 impl FilesystemState {
-    pub fn new(superblock: Superblock, store: Store) -> Self {
+    pub fn new(superblock: Superblock, stores: Vec<Store>) -> Self {
         FilesystemState {
             superblock,
             file_handles: HashMap::new(),
             next_fh: 1,
-            store,
+            stores,
         }
     }
 
@@ -62,6 +63,7 @@ struct OpenFile {
     inode: Arc<RwLock<Inode>>,
     prev_dir_entry: Option<String>,
     for_writing: bool,
+    store: RwLock<Option<Store>>,
 }
 
 impl OpenFile {
@@ -70,6 +72,7 @@ impl OpenFile {
             inode,
             prev_dir_entry: None,
             for_writing: false,
+            store: RwLock::new(None),
         }
     }
 }
@@ -454,7 +457,7 @@ impl fuse::Filesystem for Filesystem {
         let state = Arc::clone(&self.state);
         wrap_read(&self.executor, reply, async move {
             enum File {
-                Regular(Hash),
+                Regular(Option<Store>, Hash),
                 Mutable(Arc<crate::fs::MutableFile>),
             };
             let file = {
@@ -463,20 +466,42 @@ impl fuse::Filesystem for Filesystem {
                 let inode = open_file.inode.read().unwrap();
                 assert_eq!(ino, inode.ino);
                 match &inode.contents {
-                    Contents::RegularFile(reg) => File::Regular(reg.hash.clone()),
+                    Contents::RegularFile(reg) => {
+                        File::Regular(open_file.store.read().unwrap().clone(), reg.hash.clone())
+                    }
                     Contents::MutableFile(file) => File::Mutable(Arc::clone(file)),
                     _ => return Err(libc::EISDIR.into()),
                 }
             };
             match file {
-                File::Regular(hash) => {
-                    let store = Arc::clone(&state.read().unwrap().store);
-                    match store.get(&hash, offset as u64, size).await {
-                        Ok(data) => return Ok(data),
-                        Err(err) => {
-                            error!("Error reading file {}: {}", ino, err);
-                            return Err(libc::EIO.into());
+                File::Regular(store, hash) => {
+                    if let Some(store) = store {
+                        let data = store.get(&hash, offset as u64, size).await?;
+                        return Ok(data);
+                    } else {
+                        // Find a store that has this file.
+                        let stores = state.read().unwrap().stores.clone();
+                        for store in stores {
+                            match store.get(&hash, offset as u64, size).await {
+                                Ok(data) => {
+                                    *state
+                                        .write()
+                                        .unwrap()
+                                        .get_file_handle(fh)?
+                                        .store
+                                        .write()
+                                        .unwrap() = Some(store);
+                                    return Ok(data);
+                                }
+                                Err(Error::NoSuchHash(_)) => continue,
+                                Err(err) => {
+                                    error!("Error reading file {}: {}", ino, err);
+                                    return Err(libc::EIO.into());
+                                }
+                            }
                         }
+                        error!("Cannot find file {} with hash {}", ino, hash.to_hex());
+                        return Err(libc::ENOMEDIUM.into());
                     }
                 }
                 File::Mutable(file) => match file.file.read(offset as u64, size).await {
@@ -730,9 +755,8 @@ impl fuse::Filesystem for Filesystem {
         wrap_create(&self.executor, reply, async move {
             // FIXME: this creates a file even if creation fails.
             let mutable_file = {
-                let store = Arc::clone(&state.read().unwrap().store);
-                let fut = store.create_file().ok_or(libc::EROFS)?;
-                fut.await.unwrap()
+                let stores = state.read().unwrap().stores.clone();
+                create_file(stores).await?
             };
 
             let state = &mut *state.write().unwrap();
@@ -811,4 +835,13 @@ impl fuse::Filesystem for Filesystem {
     ) {
         reply.error(libc::ENOTSUP);
     }
+}
+
+async fn create_file(stores: Vec<Store>) -> std::result::Result<Box<dyn MutableFile>, FuseError> {
+    for store in stores {
+        if let Some(fut) = store.create_file() {
+            return Ok(fut.await.unwrap());
+        }
+    }
+    Err(libc::EROFS.into())
 }
