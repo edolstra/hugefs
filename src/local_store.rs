@@ -1,8 +1,9 @@
 use crate::error::Error;
 use crate::hash::Hash;
-use crate::store::{Future, Result, Store};
+use crate::store::{Future, Result, Store, Config};
 use log::debug;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::fs::File;
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,12 +12,20 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub struct LocalStore {
     root: PathBuf,
+    config: Config,
 }
 
 impl LocalStore {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
-        std::fs::create_dir_all(&root)?;
-        Ok(Self { root })
+        let mut config_file: PathBuf = root.clone();
+        config_file.push("store-config.json");
+
+        let mut config_json = String::new();
+        File::open(config_file)?.read_to_string(&mut config_json)?;
+
+        let config = serde_json::from_str(&config_json).unwrap(); // FIXME
+
+        Ok(Self { root, config })
     }
 
     fn make_temp_path(&self) -> PathBuf {
@@ -56,6 +65,10 @@ async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(
 }
 
 impl Store for LocalStore {
+    fn get_config(&self) -> Result<Config> {
+        Ok(self.config.clone())
+    }
+
     fn add(&self, data: &[u8]) -> Result<Hash> {
         let (_, hash) = Hash::hash(data)?;
 

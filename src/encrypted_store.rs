@@ -4,9 +4,37 @@ use aes_ctr::stream_cipher::generic_array::GenericArray;
 use aes_ctr::stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek};
 use aes_ctr::Aes256Ctr;
 use log::debug;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
-type Key = GenericArray<u8, <Aes256Ctr as NewStreamCipher>::KeySize>;
+#[derive(Clone)]
+pub struct Key(pub GenericArray<u8, <Aes256Ctr as NewStreamCipher>::KeySize>);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KeyFingerprint(pub Hash);
+
+impl Key {
+    pub fn from_file(key_file: &Path) -> std::result::Result<Self, std::io::Error> {
+        let mut key = vec![];
+        File::open(key_file)?.read_to_end(&mut key)?;
+        Ok(Key(GenericArray::clone_from_slice(&key)))
+    }
+
+    pub fn fingerprint(&self) -> KeyFingerprint {
+        KeyFingerprint(Hash::hash(&self.0[..]).unwrap().1)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for KeyFingerprint {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self(Hash::from_hex(&String::deserialize(deserializer)?)))
+    }
+}
 
 pub struct EncryptedStore {
     inner: Arc<dyn Store>,
@@ -33,7 +61,7 @@ impl Store for EncryptedStore {
              * encrypt *this* file. */
             let iv = GenericArray::from_slice(&file_hash.0[0..16]);
 
-            let mut cipher = Aes256Ctr::new(&self.key, &iv);
+            let mut cipher = Aes256Ctr::new(&self.key.0, &iv);
 
             let encrypted_file_hash = {
                 let mut h = file_hash.clone();
@@ -51,6 +79,7 @@ impl Store for EncryptedStore {
 
             /* Note: we shift the counter to prevent reusing the nonce
              * used to encrypt the hash above. */
+            assert_eq!(file_hash.0.len(), 64);
             cipher.seek(offset + file_hash.0.len() as u64);
             cipher.apply_keystream(&mut data);
 

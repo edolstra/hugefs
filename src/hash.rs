@@ -1,16 +1,20 @@
+use aes_ctr::stream_cipher::generic_array::GenericArray;
 use blake2::Digest;
-use std::fmt::Write;
 
-#[derive(Clone)]
-pub struct Hash(pub [u8; 64]);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Hash(pub GenericArray<u8, <blake2::Blake2b as Digest>::OutputSize>);
 
 impl Hash {
     pub fn hash<R: std::io::Read>(mut r: R) -> std::io::Result<(u64, Self)> {
         let mut hasher = blake2::Blake2b::new();
         let n = std::io::copy(&mut r, &mut hasher)?;
-        let mut hash = [0; 64];
-        hash.copy_from_slice(&hasher.result()[..]);
-        Ok((n, Self(hash)))
+        Ok((n, Self(hasher.result())))
+    }
+
+    pub fn from_hex(s: &str) -> Self {
+        // FIXME: return Result
+        let bytes = hex::decode(&s).unwrap();
+        Self(*GenericArray::from_slice(&bytes))
     }
 
     pub fn to_string(&self) -> String {
@@ -18,11 +22,7 @@ impl Hash {
     }
 
     pub fn to_hex(&self) -> String {
-        let mut s = String::new();
-        for b in self.0.iter() {
-            write!(&mut s, "{:02x}", b).unwrap();
-        }
-        s
+        hex::encode(self.0)
     }
 }
 
@@ -53,8 +53,6 @@ impl<'de> serde::Deserialize<'de> for Hash {
         D: serde::Deserializer<'de>,
     {
         let data = base64::decode(&String::deserialize(deserializer)?).unwrap();
-        let mut buf = [0; 64];
-        buf.copy_from_slice(&data[0..64]);
-        Ok(Self(buf))
+        Ok(Self(*GenericArray::from_slice(&data[0..64])))
     }
 }

@@ -10,6 +10,7 @@ pub enum Error {
     BadFileHandle(u64),
     NoSuchHash(crate::hash::Hash),
     StorageError(Box<dyn std::error::Error>),
+    NoSuchKey(crate::encrypted_store::KeyFingerprint),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -24,6 +25,7 @@ impl From<Error> for FuseError {
             Error::BadFileHandle(_) => libc::ENXIO, // denotes a kernel bug
             Error::NoSuchHash(_) => libc::ENOMEDIUM,
             Error::StorageError(_) => libc::EIO,
+            _ => libc::EIO,
         }
         .into()
     }
@@ -47,6 +49,9 @@ impl std::fmt::Display for Error {
                 write!(f, "Cannot find file with content hash {}.", hash.to_hex())
             }
             Error::StorageError(err) => write!(f, "Storage error: {}", err.to_string()),
+            Error::NoSuchKey(fp) => {
+                write!(f, "Cannot find key with fingerprint {}.", fp.0.to_hex())
+            }
         }
     }
 }
