@@ -6,7 +6,8 @@ edition = "2018"
 
 [dependencies]
 #fuse = "0.3"
-fuse = { git = "https://github.com/zargony/rust-fuse", rev = "f834fbbd5614976e8d480da249d487609504ee6e" }
+#fuse = { git = "https://github.com/zargony/rust-fuse", rev = "f834fbbd5614976e8d480da249d487609504ee6e" }
+fuse = { path = "../rust-fuse" }
 libc = "0.2"
 base64 = "0.10"
 serde = { version = "1.0", features = ["derive", "rc"] }

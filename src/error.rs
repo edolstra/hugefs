@@ -11,6 +11,11 @@ pub enum Error {
     NoSuchHash(crate::hash::Hash),
     StorageError(Box<dyn std::error::Error>),
     NoSuchKey(crate::encrypted_store::KeyFingerprint),
+    BadControlRequest,
+    BadControlResponse,
+    ControlError(String),
+    BadPath(std::path::PathBuf),
+    NotHugefs,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -52,6 +57,11 @@ impl std::fmt::Display for Error {
             Error::NoSuchKey(fp) => {
                 write!(f, "Cannot find key with fingerprint {}.", fp.0.to_hex())
             }
+            Error::BadControlRequest => write!(f, "Bad control request."),
+            Error::BadControlResponse => write!(f, "Bad control response."),
+            Error::ControlError(s) => write!(f, "Daemon error: {}", s),
+            Error::BadPath(p) => write!(f, "Bad path '{:#?}'.", p),
+            Error::NotHugefs => write!(f, "Path does not refer to a hugefs filesystem."),
         }
     }
 }

@@ -1,9 +1,9 @@
 use crate::error::Error;
 use crate::hash::Hash;
-use crate::store::{Future, Result, Store, Config};
+use crate::store::{Config, Future, Result, Store};
 use log::debug;
-use std::io::{Read, Write};
 use std::fs::File;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,6 +17,8 @@ pub struct LocalStore {
 
 impl LocalStore {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
+        let root = root.canonicalize()?;
+
         let mut config_file: PathBuf = root.clone();
         config_file.push("store-config.json");
 
@@ -69,6 +71,10 @@ impl Store for LocalStore {
         Ok(self.config.clone())
     }
 
+    fn get_url(&self) -> String {
+        self.root.to_str().unwrap().into()
+    }
+
     fn add(&self, data: &[u8]) -> Result<Hash> {
         let (_, hash) = Hash::hash(data)?;
 
@@ -82,6 +88,14 @@ impl Store for LocalStore {
         }
 
         Ok(hash)
+    }
+
+    fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool> {
+        let file_hash = file_hash.clone();
+        Box::pin(async move {
+            let path = path_for_hash(&self.root, &file_hash);
+            Ok(path.exists())
+        })
     }
 
     fn get<'a>(

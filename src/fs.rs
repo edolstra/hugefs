@@ -7,7 +7,7 @@ use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -53,6 +53,10 @@ impl Superblock {
             .ok_or(Error::NoSuchInode(ino))
     }
 
+    pub fn get_root_ino(&self) -> Ino {
+        self.root_ino
+    }
+
     fn alloc_inode(&mut self) -> Ino {
         let ino = self.next_ino;
         self.next_ino += 1;
@@ -85,11 +89,30 @@ impl Superblock {
         }
         total
     }
+
+    pub fn lookup_path(&self, path: &Path) -> crate::store::Result<Arc<RwLock<Inode>>> {
+        let mut cur_inode = self.inodes.get(&self.root_ino).unwrap();
+
+        for component in path.components() {
+            if let Component::Normal(c) = component {
+                let next_ino = cur_inode
+                    .read()
+                    .unwrap()
+                    .get_directory()?
+                    .get_entry(c.to_str().ok_or_else(|| Error::BadPath(path.into()))?)?;
+                cur_inode = self.inodes.get(&next_ino).unwrap();
+            } else {
+                return Err(Error::BadPath(path.into()));
+            }
+        }
+
+        Ok(Arc::clone(cur_inode))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Inode {
-    pub ino: u64,
+    pub ino: Ino,
     pub perm: libc::mode_t,
     pub uid: libc::uid_t,
     pub gid: libc::gid_t,

@@ -45,6 +45,23 @@ impl EncryptedStore {
     pub fn new(inner: Arc<dyn Store>, key: Key) -> Self {
         Self { inner, key }
     }
+
+    fn encrypt_file_hash(&self, file_hash: &Hash) -> (Hash, Aes256Ctr) {
+        /* We use the file hash as the IV/nonce. This is safe because
+         * by definition this nonce will only be used to encrypt
+         * *this* file. */
+        let iv = GenericArray::from_slice(&file_hash.0[0..16]);
+
+        let mut cipher = Aes256Ctr::new(&self.key.0, &iv);
+
+        let encrypted_file_hash = {
+            let mut h = file_hash.clone();
+            cipher.apply_keystream(&mut h.0);
+            h
+        };
+
+        (encrypted_file_hash, cipher)
+    }
 }
 
 impl Store for EncryptedStore {
@@ -52,22 +69,20 @@ impl Store for EncryptedStore {
         unimplemented!()
     }
 
+    fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool> {
+        let file_hash = file_hash.clone();
+
+        Box::pin(async move {
+            let (encrypted_file_hash, _) = self.encrypt_file_hash(&file_hash);
+            self.inner.has(&encrypted_file_hash).await
+        })
+    }
+
     fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> Future<'a, Vec<u8>> {
         let file_hash = file_hash.clone();
 
         Box::pin(async move {
-            /* We use the file hash as the IV/nonce. This is safe
-             * because by definition this nonce will only be used to
-             * encrypt *this* file. */
-            let iv = GenericArray::from_slice(&file_hash.0[0..16]);
-
-            let mut cipher = Aes256Ctr::new(&self.key.0, &iv);
-
-            let encrypted_file_hash = {
-                let mut h = file_hash.clone();
-                cipher.apply_keystream(&mut h.0);
-                h
-            };
+            let (encrypted_file_hash, mut cipher) = self.encrypt_file_hash(&file_hash);
 
             debug!(
                 "mapped hash {} -> {}",
@@ -89,5 +104,9 @@ impl Store for EncryptedStore {
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn MutableFile>>> {
         None
+    }
+
+    fn get_url(&self) -> String {
+        self.inner.get_url()
     }
 }

@@ -192,10 +192,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "fuse"
 version = "0.4.0-dev"
-source = "git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e#f834fbbd5614976e8d480da249d487609504ee6e"
 dependencies = [
- "fuse-abi 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)",
- "fuse-sys 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)",
+ "fuse-abi 0.4.0-dev",
+ "fuse-sys 0.4.0-dev",
  "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "thread-scoped 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -204,12 +203,10 @@ dependencies = [
 [[package]]
 name = "fuse-abi"
 version = "0.4.0-dev"
-source = "git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e#f834fbbd5614976e8d480da249d487609504ee6e"
 
 [[package]]
 name = "fuse-sys"
 version = "0.4.0-dev"
-source = "git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e#f834fbbd5614976e8d480da249d487609504ee6e"
 dependencies = [
  "pkg-config 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -323,7 +320,7 @@ dependencies = [
  "base64 0.10.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "blake2 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "fuse 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)",
+ "fuse 0.4.0-dev",
  "futures-preview 0.3.0-alpha.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -839,9 +836,6 @@ dependencies = [
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
 "checksum fuchsia-zircon 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "2e9763c69ebaae630ba35f74888db465e49e259ba1bc0eda7d06f4a067615d82"
 "checksum fuchsia-zircon-sys 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
-"checksum fuse 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)" = "<none>"
-"checksum fuse-abi 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)" = "<none>"
-"checksum fuse-sys 0.4.0-dev (git+https://github.com/zargony/rust-fuse?rev=f834fbbd5614976e8d480da249d487609504ee6e)" = "<none>"
 "checksum futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)" = "1b980f2816d6ee8673b6517b52cb0e808a180efc92e5c19d02cdda79066703ef"
 "checksum futures-channel-preview 0.3.0-alpha.19 (registry+https://github.com/rust-lang/crates.io-index)" = "d5e5f4df964fa9c1c2f8bddeb5c3611631cacd93baf810fc8bb2fb4b495c263a"
 "checksum futures-core 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)" = "79564c427afefab1dfb3298535b21eda083ef7935b4f0ecbfcb121f0aec10866"

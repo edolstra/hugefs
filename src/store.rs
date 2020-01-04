@@ -10,6 +10,8 @@ pub type Future<'a, Res> =
 pub trait Store: Send + Sync {
     fn add(&self, data: &[u8]) -> Result<Hash>;
 
+    fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool>;
+
     fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> Future<'a, Vec<u8>>;
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn MutableFile>>>;
@@ -17,6 +19,8 @@ pub trait Store: Send + Sync {
     fn get_config(&self) -> Result<Config> {
         Ok(Config::default())
     }
+
+    fn get_url(&self) -> String;
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

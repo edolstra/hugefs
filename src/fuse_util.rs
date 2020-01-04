@@ -46,6 +46,19 @@ pub fn wrap_entry(
     });
 }
 
+pub fn wrap_open(
+    executor: &tokio::runtime::Handle,
+    reply: fuse::ReplyOpen,
+    fut: impl std::future::Future<Output = Result<(u64, u32)>> + Send + 'static,
+) {
+    executor.spawn(async {
+        match fut.await {
+            Ok((fh, flags)) => reply.opened(fh, flags),
+            Err(err) => reply.error(err.0),
+        }
+    });
+}
+
 pub fn wrap_read(
     executor: &tokio::runtime::Handle,
     reply: fuse::ReplyData,

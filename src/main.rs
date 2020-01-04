@@ -1,5 +1,6 @@
 #![feature(atomic_min_max)]
 
+mod control;
 mod encrypted_store;
 mod error;
 mod fs;
@@ -10,12 +11,16 @@ mod local_store;
 //mod s3_store;
 mod store;
 
-use crate::encrypted_store::{Key, KeyFingerprint};
-use crate::error::Error;
-use crate::store::Store;
+use crate::{
+    control::{FileType, Request, Response},
+    encrypted_store::{Key, KeyFingerprint},
+    error::Error,
+    store::Store,
+};
 use log::debug;
 use std::collections::HashMap;
 use std::ffi::OsString;
+use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use structopt::StructOpt;
@@ -41,6 +46,18 @@ enum CLI {
         /// Key files
         key_files: Vec<PathBuf>,
     },
+
+    /// Get the status of a file
+    #[structopt(name = "status")]
+    Status { path: PathBuf },
+
+    /// List files that have only one backing store
+    #[structopt(name = "unmirrored")]
+    Unmirrored { path: PathBuf },
+
+    /// List files that have at least two backing stores
+    #[structopt(name = "mirrored")]
+    Mirrored { path: PathBuf },
 }
 
 fn read_key_file(key_file: &Path) -> Result<(KeyFingerprint, Key), std::io::Error> {
@@ -107,6 +124,135 @@ fn mount(
     Ok(())
 }
 
+fn get_fs_root(path: &Path) -> Result<(PathBuf, PathBuf), Error> {
+    let mut path = PathBuf::from(path);
+    let mut sub: Vec<OsString> = vec![];
+
+    loop {
+        if path.clone().join(fusefs::CONTROL_NAME).exists() {
+            let mut sub2 = PathBuf::new();
+            for s in sub.iter().rev() {
+                sub2 = sub2.join(s);
+            }
+            debug!("Found root '{}', sub '{}'.", path.display(), sub2.display());
+            return Ok((path.into(), sub2));
+        }
+        if let Some(file_name) = path.file_name() {
+            sub.push(file_name.into());
+        }
+        if !path.pop() {
+            return Err(Error::NotHugefs);
+        }
+    }
+}
+
+fn execute_request(root: &Path, req: Request) -> Result<Response, Error> {
+    let control_path = root.join(fusefs::CONTROL_NAME);
+
+    let mut control_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(control_path)?;
+
+    let mut req_s = serde_json::to_string(&req).unwrap();
+    req_s.push('\n');
+
+    control_file.write_all(req_s.as_bytes())?;
+
+    control_file.seek(std::io::SeekFrom::Start(0))?;
+
+    let res = serde_json::from_reader(control_file).map_err(|_| Error::BadControlResponse)?;
+
+    debug!("Control response: {:?}", res);
+
+    Ok(res)
+}
+
+fn status(path: &Path) -> Result<(), Error> {
+    let (root, path) = get_fs_root(path)?;
+
+    let req = Request::Status { path };
+
+    match execute_request(&root, req)? {
+        Response::Status(status) => {
+            println!(" Type: {}", status.info.get_type());
+            match status.info {
+                FileType::ImmutableFile {
+                    size, hash, stores, ..
+                } => {
+                    println!(" Size: {}", size);
+                    println!(" Hash: {}", hash.to_hex());
+                    for store in stores {
+                        println!("Store: {}", store);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Response::Error { msg } => return Err(Error::ControlError(msg)),
+        _ => panic!("Unexpected daemon response."),
+    }
+
+    Ok(())
+}
+
+fn traverse(
+    root: &Path,
+    path: &Path,
+    callback: &dyn Fn(&Path, usize) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let req = Request::Status { path: path.into() };
+
+    match execute_request(&root, req)? {
+        Response::Status(status) => match status.info {
+            FileType::Directory { .. } => {
+                for entry in std::fs::read_dir(root.join(path))? {
+                    let entry = entry.unwrap();
+                    let file_name = entry.file_name();
+                    if file_name == "." || file_name == ".." {
+                        continue;
+                    }
+                    traverse(root, &path.join(file_name), callback)?;
+                }
+            }
+            FileType::ImmutableFile { stores, .. } => {
+                callback(&root.join(path), stores.len())?;
+            }
+            FileType::MutableFile { .. } => {
+                callback(&root.join(path), 0)?;
+            }
+            FileType::Symlink { .. } => {}
+        },
+        Response::Error { msg } => return Err(Error::ControlError(msg)),
+        _ => panic!("Unexpected daemon response."),
+    }
+
+    Ok(())
+}
+
+enum Mode {
+    Unmirrored,
+    Mirrored,
+}
+
+fn find_files(path: &Path, mode: Mode) -> Result<(), Error> {
+    let (root, path) = get_fs_root(path)?;
+
+    traverse(&root, &path, &|path: &Path,
+                             store_count: usize|
+     -> Result<(), Error> {
+        if match &mode {
+            Mode::Unmirrored => store_count < 2,
+            Mode::Mirrored => store_count >= 2,
+        } {
+            println!("{}", root.join(path).display());
+        }
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     let _ = env_logger::try_init();
 
@@ -118,6 +264,18 @@ fn main() -> Result<(), Error> {
             key_files,
         } => {
             mount(state_file, mount_point, stores, key_files)?;
+        }
+
+        CLI::Status { path } => {
+            status(&path)?;
+        }
+
+        CLI::Unmirrored { path } => {
+            find_files(&path, Mode::Unmirrored)?;
+        }
+
+        CLI::Mirrored { path } => {
+            find_files(&path, Mode::Mirrored)?;
         }
     }
 

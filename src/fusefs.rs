@@ -4,6 +4,7 @@ use crate::fuse_util::*;
 use crate::hash::Hash;
 use crate::store::MutableFile;
 use fuse::{ReplyEmpty, Request};
+use futures::future::FutureExt;
 use libc::c_int;
 use log::{debug, error};
 use std::collections::{btree_map::Entry, HashMap};
@@ -20,33 +21,32 @@ use std::time::{Duration, SystemTime};
 type Store = Arc<dyn crate::store::Store>;
 
 pub struct FilesystemState {
-    superblock: Superblock,
-    file_handles: HashMap<u64, OpenFile>,
+    pub superblock: Superblock,
+    file_handles: FileHandles,
+    pub stores: Vec<Store>,
+}
+
+struct FileHandles {
     next_fh: u64,
-    stores: Vec<Store>,
+    handles: HashMap<u64, OpenFile>,
+}
+
+enum OpenFile {
+    Regular(OpenRegularFile),
+    Directory(OpenDirectory),
+    Control(OpenControlFile),
 }
 
 impl FilesystemState {
     pub fn new(superblock: Superblock, stores: Vec<Store>) -> Self {
         FilesystemState {
             superblock,
-            file_handles: HashMap::new(),
-            next_fh: 1,
+            file_handles: FileHandles {
+                next_fh: 1,
+                handles: HashMap::new(),
+            },
             stores,
         }
-    }
-
-    fn new_file_handle(&mut self, open_file: OpenFile) -> u64 {
-        let fh = self.next_fh;
-        self.next_fh += 1;
-        self.file_handles.insert(fh, open_file);
-        fh
-    }
-
-    fn get_file_handle<'a>(&'a mut self, fh: u64) -> Result<&'a mut OpenFile> {
-        self.file_handles
-            .get_mut(&fh)
-            .ok_or(Error::BadFileHandle(fh))
     }
 
     pub fn sync(&self, path: &Path) -> std::io::Result<()> {
@@ -59,22 +59,63 @@ impl FilesystemState {
     }
 }
 
-struct OpenFile {
+impl FileHandles {
+    fn create(&mut self, open_file: OpenFile) -> u64 {
+        let fh = self.next_fh;
+        self.next_fh += 1;
+        self.handles.insert(fh, open_file);
+        fh
+    }
+
+    fn remove(&mut self, fh: u64) -> Result<OpenFile> {
+        self.handles.remove(&fh).ok_or(Error::BadFileHandle(fh))
+    }
+
+    fn get<'a>(&'a mut self, fh: u64) -> Result<&'a mut OpenFile> {
+        self.handles.get_mut(&fh).ok_or(Error::BadFileHandle(fh))
+    }
+
+    fn get_regular<'a>(&'a mut self, fh: u64) -> Result<&'a mut OpenRegularFile> {
+        match self.handles.get_mut(&fh) {
+            Some(OpenFile::Regular(x)) => Ok(x),
+            _ => Err(Error::BadFileHandle(fh)),
+        }
+    }
+
+    fn get_directory<'a>(&'a mut self, fh: u64) -> Result<&'a mut OpenDirectory> {
+        match self.handles.get_mut(&fh) {
+            Some(OpenFile::Directory(x)) => Ok(x),
+            _ => Err(Error::BadFileHandle(fh)),
+        }
+    }
+}
+
+struct OpenRegularFile {
     inode: Arc<RwLock<Inode>>,
-    prev_dir_entry: Option<String>,
     for_writing: bool,
     store: RwLock<Option<Store>>,
 }
 
-impl OpenFile {
+impl OpenRegularFile {
     fn new(inode: Arc<RwLock<Inode>>) -> Self {
-        OpenFile {
+        Self {
             inode,
-            prev_dir_entry: None,
             for_writing: false,
             store: RwLock::new(None),
         }
     }
+}
+
+struct OpenDirectory {
+    inode: Arc<RwLock<Inode>>,
+    prev_dir_entry: String,
+}
+
+type ControlFuture = std::pin::Pin<Box<dyn futures::Future<Output = String> + Send>>;
+
+struct OpenControlFile {
+    tx: tokio::sync::mpsc::UnboundedSender<u8>,
+    fut: futures::future::Shared<ControlFuture>,
 }
 
 impl Inode {
@@ -109,6 +150,7 @@ impl From<&Inode> for fuse::FileAttr {
             gid: inode.gid,
             rdev: 0,
             flags: 0,
+            blksize: 1024,
         }
     }
 }
@@ -126,6 +168,30 @@ impl Filesystem {
 
 static GENERATION_COUNT: AtomicU64 = AtomicU64::new(0);
 
+static CONTROL_INO: crate::fs::Ino = 0xfffffff0;
+pub static CONTROL_NAME: &str = ".hugefsctl1";
+
+fn control_inode_attrs() -> fuse::FileAttr {
+    let time = SystemTime::UNIX_EPOCH;
+    fuse::FileAttr {
+        ino: CONTROL_INO,
+        size: 1 << 20, // FIXME
+        blocks: 0,
+        atime: time,
+        mtime: time,
+        ctime: time,
+        crtime: time,
+        kind: fuse::FileType::RegularFile,
+        perm: 0o600,
+        nlink: 1,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        flags: 0,
+        blksize: 0,
+    }
+}
+
 impl fuse::Filesystem for Filesystem {
     fn init(&mut self, _req: &Request) -> std::result::Result<(), c_int> {
         Ok(())
@@ -135,6 +201,12 @@ impl fuse::Filesystem for Filesystem {
 
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: fuse::ReplyEntry) {
         let state = self.state.read().unwrap();
+
+        if parent == state.superblock.get_root_ino() && name == CONTROL_NAME {
+            reply.entry(&Duration::from_secs(3600), &control_inode_attrs(), 0);
+            return;
+        }
+
         let inode = state.superblock.get_inode(parent).unwrap();
         let inode = inode.read().unwrap();
         if let Contents::Directory(dir) = &inode.contents {
@@ -157,8 +229,12 @@ impl fuse::Filesystem for Filesystem {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: fuse::ReplyAttr) {
         let state = self.state.read().unwrap();
-        let inode = state.superblock.get_inode(ino).unwrap();
-        reply.attr(&Duration::from_secs(60), &(&*inode.read().unwrap()).into());
+        if ino == CONTROL_INO {
+            reply.attr(&Duration::from_secs(60), &control_inode_attrs());
+        } else {
+            let inode = state.superblock.get_inode(ino).unwrap();
+            reply.attr(&Duration::from_secs(60), &(&*inode.read().unwrap()).into());
+        }
     }
 
     fn setattr(
@@ -435,14 +511,37 @@ impl fuse::Filesystem for Filesystem {
     }
 
     fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: fuse::ReplyOpen) {
-        let mut state = self.state.write().unwrap();
-        let inode = state.superblock.get_inode(ino).unwrap();
-        if inode.read().unwrap().is_file() {
-            let fh = state.new_file_handle(OpenFile::new(inode));
-            reply.opened(fh, FOPEN_KEEP_CACHE);
-        } else {
-            reply.error(libc::EISDIR);
-        }
+        let state = Arc::clone(&self.state);
+
+        wrap_open(&self.executor, reply, async move {
+            let mut state_ = state.write().unwrap();
+
+            if ino == CONTROL_INO {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<u8>();
+                let fut: ControlFuture =
+                    crate::control::handle_message(rx, Arc::clone(&state)).boxed();
+                let fut = fut.shared();
+                tokio::task::spawn(fut.clone());
+                return Ok((
+                    state_
+                        .file_handles
+                        .create(OpenFile::Control(OpenControlFile { tx, fut })),
+                    fuse::consts::FOPEN_DIRECT_IO, /* | fuse::consts::FOPEN_NONSEEKABLE */
+                ));
+            }
+
+            let inode = state_.superblock.get_inode(ino)?;
+            if !inode.read().unwrap().is_file() {
+                return Err(libc::EISDIR.into());
+            }
+
+            Ok((
+                state_
+                    .file_handles
+                    .create(OpenFile::Regular(OpenRegularFile::new(inode))),
+                FOPEN_KEEP_CACHE,
+            ))
+        });
     }
 
     fn read(
@@ -459,20 +558,31 @@ impl fuse::Filesystem for Filesystem {
             enum File {
                 Regular(Option<Store>, Hash),
                 Mutable(Arc<crate::fs::MutableFile>),
+                Control(futures::future::Shared<ControlFuture>),
             };
+
             let file = {
                 let state = &mut *state.write().unwrap();
-                let open_file = state.get_file_handle(fh)?;
-                let inode = open_file.inode.read().unwrap();
-                assert_eq!(ino, inode.ino);
-                match &inode.contents {
-                    Contents::RegularFile(reg) => {
-                        File::Regular(open_file.store.read().unwrap().clone(), reg.hash.clone())
+                match state.file_handles.get(fh)? {
+                    OpenFile::Regular(open_file) => {
+                        let inode = open_file.inode.read().unwrap();
+                        assert_eq!(ino, inode.ino);
+                        match &inode.contents {
+                            Contents::RegularFile(reg) => File::Regular(
+                                open_file.store.read().unwrap().clone(),
+                                reg.hash.clone(),
+                            ),
+                            Contents::MutableFile(file) => File::Mutable(Arc::clone(file)),
+                            _ => return Err(libc::EISDIR.into()),
+                        }
                     }
-                    Contents::MutableFile(file) => File::Mutable(Arc::clone(file)),
-                    _ => return Err(libc::EISDIR.into()),
+                    OpenFile::Directory(_) => {
+                        return Err(libc::EISDIR.into());
+                    }
+                    OpenFile::Control(control_file) => File::Control(control_file.fut.clone()),
                 }
             };
+
             match file {
                 File::Regular(store, hash) => {
                     if let Some(store) = store {
@@ -487,7 +597,8 @@ impl fuse::Filesystem for Filesystem {
                                     *state
                                         .write()
                                         .unwrap()
-                                        .get_file_handle(fh)?
+                                        .file_handles
+                                        .get_regular(fh)?
                                         .store
                                         .write()
                                         .unwrap() = Some(store);
@@ -504,6 +615,7 @@ impl fuse::Filesystem for Filesystem {
                         return Err(libc::ENOMEDIUM.into());
                     }
                 }
+
                 File::Mutable(file) => match file.file.read(offset as u64, size).await {
                     Ok(data) => return Ok(data),
                     Err(err) => {
@@ -511,6 +623,18 @@ impl fuse::Filesystem for Filesystem {
                         return Err(libc::EIO.into());
                     }
                 },
+
+                File::Control(fut) => {
+                    let res = fut.await;
+                    // FIXME: inefficient
+                    return Ok(res
+                        .as_bytes()
+                        .iter()
+                        .skip(offset as usize)
+                        .take(size as usize)
+                        .map(|s| *s)
+                        .collect());
+                }
             }
         });
     }
@@ -531,13 +655,26 @@ impl fuse::Filesystem for Filesystem {
         wrap_write(&self.executor, reply, async move {
             let file = {
                 let state = &mut *state.write().unwrap();
-                let open_file = state.get_file_handle(fh)?;
-                let inode = open_file.inode.read().unwrap();
-                assert_eq!(ino, inode.ino);
-                match &inode.contents {
-                    Contents::MutableFile(file) => Arc::clone(file),
-                    Contents::RegularFile(_) => return Err(libc::EPERM.into()),
-                    _ => return Err(libc::EISDIR.into()),
+
+                match state.file_handles.get(fh)? {
+                    OpenFile::Regular(open_file) => {
+                        let inode = open_file.inode.read().unwrap();
+                        assert_eq!(ino, inode.ino);
+                        match &inode.contents {
+                            Contents::MutableFile(file) => Arc::clone(file),
+                            Contents::RegularFile(_) => return Err(libc::EPERM.into()),
+                            _ => return Err(libc::EISDIR.into()),
+                        }
+                    }
+
+                    OpenFile::Control(control_file) => {
+                        for d in &data {
+                            control_file.tx.send(*d).map_err(|_| libc::ENOTCONN)?;
+                        }
+                        return Ok(data.len() as u32);
+                    }
+
+                    OpenFile::Directory(_) => return Err(libc::EISDIR.into()),
                 }
             };
 
@@ -566,18 +703,21 @@ impl fuse::Filesystem for Filesystem {
         wrap_empty(&self.executor, reply, async move {
             let (inode, mutable_file) = {
                 let state = &mut *state.write().unwrap();
-                if let Some(open_file) = state.file_handles.remove(&fh) {
-                    if !open_file.for_writing {
+                match state.file_handles.remove(fh)? {
+                    OpenFile::Regular(open_file) => {
+                        if !open_file.for_writing {
+                            return Ok(());
+                        }
+                        let mut inode = open_file.inode.write().unwrap();
+                        if let Contents::MutableFile(file) = &mut inode.contents {
+                            (Arc::clone(&open_file.inode), Arc::clone(file))
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    _ => {
                         return Ok(());
                     }
-                    let mut inode = open_file.inode.write().unwrap();
-                    if let Contents::MutableFile(file) = &mut inode.contents {
-                        (Arc::clone(&open_file.inode), Arc::clone(file))
-                    } else {
-                        return Ok(());
-                    }
-                } else {
-                    return Err(libc::EBADF.into());
                 }
             };
 
@@ -600,9 +740,12 @@ impl fuse::Filesystem for Filesystem {
         let mut state = self.state.write().unwrap();
         let inode = state.superblock.get_inode(ino).unwrap();
         if inode.read().unwrap().file_type() == fuse::FileType::Directory {
-            let mut open_file = OpenFile::new(inode);
-            open_file.prev_dir_entry = Some(String::new());
-            let fh = state.new_file_handle(open_file);
+            let fh = state
+                .file_handles
+                .create(OpenFile::Directory(OpenDirectory {
+                    inode,
+                    prev_dir_entry: String::new(),
+                }));
             reply.opened(fh, 0);
         } else {
             reply.error(libc::ENOTDIR);
@@ -618,39 +761,35 @@ impl fuse::Filesystem for Filesystem {
         mut reply: fuse::ReplyDirectory,
     ) {
         let state = &mut *self.state.write().unwrap();
-        if let Some(open_file) = state.file_handles.get_mut(&fh) {
-            let inode = open_file.inode.read().unwrap();
+        if let Ok(open_dir) = state.file_handles.get_directory(fh) {
+            let inode = open_dir.inode.read().unwrap();
             assert_eq!(ino, inode.ino);
-            if let Some(prev_dir_entry) = &mut open_file.prev_dir_entry {
-                if let Contents::Directory(dir) = &inode.contents {
-                    // FIXME: clone
-                    for (k, v) in dir
-                        .entries
-                        .range::<String, _>((Excluded(prev_dir_entry.clone()), Unbounded))
-                    {
-                        if reply.add(
-                            ino,
-                            0, /* FIXME */
-                            state
-                                .superblock
-                                .get_inode(*v)
-                                .unwrap()
-                                .read()
-                                .unwrap()
-                                .file_type(),
-                            k,
-                        ) {
-                            break;
-                        } else {
-                            *prev_dir_entry = k.clone();
-                        }
+            if let Contents::Directory(dir) = &inode.contents {
+                // FIXME: clone
+                for (k, v) in dir
+                    .entries
+                    .range::<String, _>((Excluded(open_dir.prev_dir_entry.clone()), Unbounded))
+                {
+                    if reply.add(
+                        ino,
+                        0, /* FIXME */
+                        state
+                            .superblock
+                            .get_inode(*v)
+                            .unwrap()
+                            .read()
+                            .unwrap()
+                            .file_type(),
+                        k,
+                    ) {
+                        break;
+                    } else {
+                        open_dir.prev_dir_entry = k.clone();
                     }
-
-                    // FIXME: indicate buffer too small
-                    reply.ok();
-                } else {
-                    reply.error(libc::ENOTDIR);
                 }
+
+                // FIXME: indicate buffer too small
+                reply.ok();
             } else {
                 reply.error(libc::ENOTDIR);
             }
@@ -661,7 +800,7 @@ impl fuse::Filesystem for Filesystem {
 
     fn releasedir(&mut self, _req: &Request, _ino: u64, fh: u64, _flags: u32, reply: ReplyEmpty) {
         let mut state = self.state.write().unwrap();
-        if let Some(_) = state.file_handles.remove(&fh) {
+        if let Ok(_) = state.file_handles.remove(fh) {
             reply.ok();
         } else {
             reply.error(libc::EBADF);
@@ -780,9 +919,9 @@ impl fuse::Filesystem for Filesystem {
             dir.entries.insert(name, ino);
             attr.ino = ino;
 
-            let mut open_file = OpenFile::new(state.superblock.get_inode(ino)?);
+            let mut open_file = OpenRegularFile::new(state.superblock.get_inode(ino)?);
             open_file.for_writing = true;
-            let fh = state.new_file_handle(open_file);
+            let fh = state.file_handles.create(OpenFile::Regular(open_file));
 
             Ok(crate::fuse_util::CreateOk {
                 ttl: Duration::from_secs(60),
