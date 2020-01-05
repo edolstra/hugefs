@@ -7,6 +7,7 @@ pub enum Error {
     NoSuchEntry,
     EntryExists,
     NotDirectory(Ino),
+    NotImmutableFile(Ino),
     BadFileHandle(u64),
     NoSuchHash(crate::hash::Hash),
     StorageError(Box<dyn std::error::Error>),
@@ -16,6 +17,7 @@ pub enum Error {
     ControlError(String),
     BadPath(std::path::PathBuf),
     NotHugefs,
+    UnknownStore(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -49,6 +51,7 @@ impl std::fmt::Display for Error {
             Error::NoSuchEntry => write!(f, "Directory entry does not exist."),
             Error::EntryExists => write!(f, "Directory entry already exists."),
             Error::NotDirectory(ino) => write!(f, "Inode {} is not a directory.", ino),
+            Error::NotImmutableFile(ino) => write!(f, "Inode {} is not an immutable file.", ino),
             Error::BadFileHandle(n) => write!(f, "Bad file handle {}.", n),
             Error::NoSuchHash(hash) => {
                 write!(f, "Cannot find file with content hash {}.", hash.to_hex())
@@ -62,6 +65,7 @@ impl std::fmt::Display for Error {
             Error::ControlError(s) => write!(f, "Daemon error: {}", s),
             Error::BadPath(p) => write!(f, "Bad path '{:#?}'.", p),
             Error::NotHugefs => write!(f, "Path does not refer to a hugefs filesystem."),
+            Error::UnknownStore(s) => write!(f, "Unknown store '{}'.", s),
         }
     }
 }

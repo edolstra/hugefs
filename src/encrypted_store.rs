@@ -78,7 +78,7 @@ impl Store for EncryptedStore {
         })
     }
 
-    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> Future<'a, Vec<u8>> {
+    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: usize) -> Future<'a, Vec<u8>> {
         let file_hash = file_hash.clone();
 
         Box::pin(async move {

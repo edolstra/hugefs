@@ -20,7 +20,7 @@ use crate::{
 use log::debug;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{Seek, Write};
+use std::io::{BufReader, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use structopt::StructOpt;
@@ -58,6 +58,10 @@ enum CLI {
     /// List files that have at least two backing stores
     #[structopt(name = "mirrored")]
     Mirrored { path: PathBuf },
+
+    /// Copy a file to a backing store
+    #[structopt(name = "mirror")]
+    Mirror { path: PathBuf, store: String },
 }
 
 fn read_key_file(key_file: &Path) -> Result<(KeyFingerprint, Key), std::io::Error> {
@@ -161,7 +165,8 @@ fn execute_request(root: &Path, req: Request) -> Result<Response, Error> {
 
     control_file.seek(std::io::SeekFrom::Start(0))?;
 
-    let res = serde_json::from_reader(control_file).map_err(|_| Error::BadControlResponse)?;
+    let res = serde_json::from_reader(BufReader::new(control_file))
+        .map_err(|_| Error::BadControlResponse)?;
 
     debug!("Control response: {:?}", res);
 
@@ -253,6 +258,23 @@ fn find_files(path: &Path, mode: Mode) -> Result<(), Error> {
     Ok(())
 }
 
+fn mirror(path: &Path, store: &str) -> Result<(), Error> {
+    let (root, path) = get_fs_root(path)?;
+
+    let req = Request::Mirror {
+        path: path.into(),
+        store: store.into(),
+    };
+
+    match execute_request(&root, req)? {
+        Response::Mirror(_) => {}
+        Response::Error { msg } => return Err(Error::ControlError(msg)),
+        _ => panic!("Unexpected daemon response."),
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     let _ = env_logger::try_init();
 
@@ -276,6 +298,10 @@ fn main() -> Result<(), Error> {
 
         CLI::Mirrored { path } => {
             find_files(&path, Mode::Mirrored)?;
+        }
+
+        CLI::Mirror { path, store } => {
+            mirror(&path, &store)?;
         }
     }
 

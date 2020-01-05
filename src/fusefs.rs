@@ -8,7 +8,7 @@ use futures::future::FutureExt;
 use libc::c_int;
 use log::{debug, error};
 use std::collections::{btree_map::Entry, HashMap};
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::ffi::OsStr;
 use std::ops::Bound::{Excluded, Unbounded};
 use std::path::{Path, PathBuf};
@@ -586,13 +586,18 @@ impl fuse::Filesystem for Filesystem {
             match file {
                 File::Regular(store, hash) => {
                     if let Some(store) = store {
-                        let data = store.get(&hash, offset as u64, size).await?;
+                        let data = store
+                            .get(&hash, offset as u64, usize::try_from(size).unwrap())
+                            .await?;
                         return Ok(data);
                     } else {
                         // Find a store that has this file.
                         let stores = state.read().unwrap().stores.clone();
                         for store in stores {
-                            match store.get(&hash, offset as u64, size).await {
+                            match store
+                                .get(&hash, offset as u64, usize::try_from(size).unwrap())
+                                .await
+                            {
                                 Ok(data) => {
                                     *state
                                         .write()

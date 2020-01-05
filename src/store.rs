@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::hash::Hash;
 use serde::Deserialize;
+use std::convert::TryFrom;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -12,7 +13,7 @@ pub trait Store: Send + Sync {
 
     fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool>;
 
-    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: u32) -> Future<'a, Vec<u8>>;
+    fn get<'a>(&'a self, file_hash: &Hash, offset: u64, size: usize) -> Future<'a, Vec<u8>>;
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn MutableFile>>>;
 
@@ -36,4 +37,23 @@ pub trait MutableFile: Send + Sync {
     fn finish<'a>(&'a self) -> Future<'a, (u64, Hash)>;
 
     fn len(&self) -> u64;
+}
+
+pub async fn copy_file(
+    file_hash: &Hash,
+    size: u64,
+    src_store: &dyn Store,
+    dst_store: &dyn Store,
+) -> Result<()> {
+    // FIXME: copy in smaller chunks, or stream directly from src_store to dst_store.
+
+    let data = src_store
+        .get(file_hash, 0, usize::try_from(size).unwrap())
+        .await?;
+
+    let new_hash = dst_store.add(&data)?; // FIXME: async
+
+    assert_eq!(*file_hash, new_hash);
+
+    Ok(())
 }

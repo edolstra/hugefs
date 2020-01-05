@@ -102,7 +102,7 @@ impl Store for LocalStore {
         &'a self,
         file_hash: &Hash,
         offset: u64,
-        size: u32,
+        size: usize,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send + 'a>> {
         let file_hash = file_hash.clone();
         Box::pin(async move {

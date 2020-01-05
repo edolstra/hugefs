@@ -3,6 +3,7 @@ use crate::{
     fs::{Contents, Ino},
     fusefs::FilesystemState,
     hash::Hash,
+    store::Store,
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -12,18 +13,25 @@ use std::sync::{Arc, RwLock};
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
     Status { path: PathBuf },
+    Mirror { path: PathBuf, store: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
     Error { msg: String },
     Status(StatusResponse),
+    Mirror(MirrorResponse),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub ino: Ino,
     pub info: FileType,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MirrorResponse {
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,6 +94,9 @@ async fn handle_inner(
 
     match req {
         Request::Status { path } => handle_status(&path, fs).await.map(|x| Response::Status(x)),
+        Request::Mirror { path, store } => handle_mirror(&path, &store, fs)
+            .await
+            .map(|x| Response::Mirror(x)),
     }
 }
 
@@ -121,4 +132,48 @@ async fn handle_status(path: &Path, fs: Arc<RwLock<FilesystemState>>) -> Result<
     }
 
     Ok(status)
+}
+
+async fn handle_mirror(
+    path: &Path,
+    store: &str,
+    fs: Arc<RwLock<FilesystemState>>,
+) -> Result<MirrorResponse> {
+    let (hash, size, stores) = {
+        let fs = fs.read().unwrap();
+        let inode = fs.superblock.lookup_path(path)?;
+        let inode = inode.read().unwrap();
+        match &inode.contents {
+            Contents::RegularFile(file) => (file.hash.clone(), file.length, fs.stores.clone()),
+            _ => return Err(Error::NotImmutableFile(inode.ino)),
+        }
+    };
+
+    let dst_store = stores
+        .iter()
+        .find(|st| st.get_url() == store)
+        .ok_or_else(|| Error::UnknownStore(store.into()))?;
+
+    if dst_store.has(&hash).await? {
+        Ok(MirrorResponse { from: None })
+    } else {
+        for src_store in &stores {
+            if Arc::ptr_eq(src_store, dst_store) {
+                continue;
+            }
+            match crate::store::copy_file(&hash, size, src_store.as_ref(), dst_store.as_ref()).await
+            {
+                Ok(()) => {
+                    return Ok(MirrorResponse {
+                        from: Some(src_store.get_url()),
+                    });
+                }
+                Err(Error::NoSuchHash(_)) => {}
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        }
+        Err(Error::NoSuchHash(hash))
+    }
 }
