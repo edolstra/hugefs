@@ -1,5 +1,5 @@
 use crate::hash::Hash;
-use crate::store::{Future, MutableFile, Result, Store};
+use crate::store::{Future, MutableFile, Store};
 use aes_ctr::stream_cipher::generic_array::GenericArray;
 use aes_ctr::stream_cipher::{NewStreamCipher, SyncStreamCipher, SyncStreamCipherSeek};
 use aes_ctr::Aes256Ctr;
@@ -60,13 +60,34 @@ impl EncryptedStore {
             h
         };
 
+        debug!(
+            "Mapped hash {} -> {}.",
+            file_hash.to_hex(),
+            encrypted_file_hash.to_hex()
+        );
+
         (encrypted_file_hash, cipher)
     }
 }
 
 impl Store for EncryptedStore {
-    fn add(&self, data: &[u8]) -> Result<Hash> {
-        unimplemented!()
+    fn add<'a>(&'a self, file_hash: &Hash, data: &'a [u8]) -> Future<'a, ()> {
+        let file_hash = file_hash.clone();
+
+        Box::pin(async move {
+            let (encrypted_file_hash, mut cipher) = self.encrypt_file_hash(&file_hash);
+
+            // FIXME: stream this.
+            let mut encrypted_data = data.to_vec();
+
+            /* Note: we shift the counter to prevent reusing the nonce
+             * used to encrypt the hash above. */
+            assert_eq!(file_hash.0.len(), 64);
+            cipher.seek(file_hash.0.len() as u64);
+            cipher.apply_keystream(&mut encrypted_data);
+
+            self.inner.add(&encrypted_file_hash, &encrypted_data).await
+        })
     }
 
     fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool> {
@@ -83,12 +104,6 @@ impl Store for EncryptedStore {
 
         Box::pin(async move {
             let (encrypted_file_hash, mut cipher) = self.encrypt_file_hash(&file_hash);
-
-            debug!(
-                "mapped hash {} -> {}",
-                file_hash.to_hex(),
-                encrypted_file_hash.to_hex()
-            );
 
             let mut data = self.inner.get(&encrypted_file_hash, offset, size).await?;
 

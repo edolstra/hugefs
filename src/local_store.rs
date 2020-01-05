@@ -3,7 +3,7 @@ use crate::hash::Hash;
 use crate::store::{Config, Future, Result, Store};
 use log::debug;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,19 +75,18 @@ impl Store for LocalStore {
         self.root.to_str().unwrap().into()
     }
 
-    fn add(&self, data: &[u8]) -> Result<Hash> {
-        let (_, hash) = Hash::hash(data)?;
-
-        let path = path_for_hash(&self.root, &hash);
-
-        if !path.exists() {
-            // FIXME: make atomic
-            debug!("writing {:?}", path);
-            let mut file = std::fs::File::create(&path)?;
-            file.write_all(data)?
-        }
-
-        Ok(hash)
+    fn add<'a>(&'a self, file_hash: &Hash, data: &'a [u8]) -> Future<'a, ()> {
+        let file_hash = file_hash.clone();
+        let path = path_for_hash(&self.root, &file_hash);
+        Box::pin(async move {
+            if !path.exists() {
+                // FIXME: make atomic
+                debug!("Writing {}.", path.display());
+                let mut file = tokio::fs::File::create(path).await?;
+                file.write_all(data).await?;
+            }
+            Ok(())
+        })
     }
 
     fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool> {

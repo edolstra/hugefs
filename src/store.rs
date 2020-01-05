@@ -9,7 +9,7 @@ pub type Future<'a, Res> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Res>> + Send + 'a>>;
 
 pub trait Store: Send + Sync {
-    fn add(&self, data: &[u8]) -> Result<Hash>;
+    fn add<'a>(&'a self, file_hash: &Hash, data: &'a [u8]) -> Future<'a, ()>;
 
     fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool>;
 
@@ -51,9 +51,7 @@ pub async fn copy_file(
         .get(file_hash, 0, usize::try_from(size).unwrap())
         .await?;
 
-    let new_hash = dst_store.add(&data)?; // FIXME: async
-
-    assert_eq!(*file_hash, new_hash);
+    dst_store.add(file_hash, &data).await?;
 
     Ok(())
 }

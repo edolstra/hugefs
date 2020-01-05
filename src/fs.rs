@@ -1,12 +1,11 @@
 use crate::error::{Error, Result};
 use crate::hash::Hash;
-use crate::store::Store;
 use libc;
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
-use std::fs;
+//use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::MetadataExt;
+//use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -268,6 +267,7 @@ impl Superblock {
         serde_json::ser::to_writer(file, &self)
     }
 
+    /*
     pub fn import<S: Store>(&mut self, path: &Path, store: &mut S) -> crate::store::Result<()> {
         let file = self.import_file(path, store)?;
         let file_ino = self.add_inode(file);
@@ -293,9 +293,12 @@ impl Superblock {
         let contents = if st.file_type().is_file() {
             let mut buf = vec![];
             std::fs::File::open(&path)?.read_to_end(&mut buf)?;
+            let (size, hash) = Hash::hash(&buf[..]).unwrap();
+            assert_eq!(size, buf.len() as u64);
+            tokio::task::spawn(store.add(&hash, &buf))?;
             Contents::RegularFile(RegularFile {
                 length: st.len(),
-                hash: store.add(&buf)?,
+                hash,
             })
         } else if st.file_type().is_dir() {
             let mut entries = BTreeMap::new();
@@ -322,4 +325,5 @@ impl Superblock {
             ..Inode::new(contents)
         })
     }
+    */
 }

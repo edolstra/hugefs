@@ -3,7 +3,6 @@ use crate::{
     fs::{Contents, Ino},
     fusefs::FilesystemState,
     hash::Hash,
-    store::Store,
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
