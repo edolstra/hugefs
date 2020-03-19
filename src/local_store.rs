@@ -19,6 +19,9 @@ impl LocalStore {
     pub fn new(root: PathBuf) -> std::io::Result<Self> {
         let root = root.canonicalize()?;
 
+        std::fs::create_dir_all(root.join("mutable"))?;
+        std::fs::create_dir_all(root.join("ca"))?;
+
         let mut config_file: PathBuf = root.clone();
         config_file.push("store-config.json");
 
@@ -31,23 +34,19 @@ impl LocalStore {
     }
 
     fn make_temp_path(&self) -> PathBuf {
-        let mut path = self.root.clone();
-        path.push(format!(
-            "temp.{}.{}",
+        self.root.clone().join("mutable").join(format!(
+            "{}.{}",
             process::id(),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ));
-        path
+        ))
     }
 }
 
 fn path_for_hash(root: impl Into<PathBuf>, file_hash: &Hash) -> PathBuf {
-    let mut path: PathBuf = root.into();
-    path.push(file_hash.to_hex());
-    path
+    root.into().join("ca").join(file_hash.to_hex())
 }
 
 async fn read_n<R: tokio::io::AsyncReadExt + std::marker::Unpin>(
@@ -133,6 +132,7 @@ impl Store for LocalStore {
                 .await?;
             let handle: Box<dyn crate::store::MutableFile> = Box::new(MutableFile {
                 temp_path,
+                root: self.root.clone(),
                 file: futures::lock::Mutex::new(Some(file)),
                 len: AtomicU64::new(0),
             });
@@ -143,6 +143,7 @@ impl Store for LocalStore {
 
 struct MutableFile {
     temp_path: PathBuf,
+    root: PathBuf,
     file: futures::lock::Mutex<Option<tokio::fs::File>>,
     len: AtomicU64,
 }
@@ -197,7 +198,7 @@ impl crate::store::MutableFile for MutableFile {
                 let mut buf = vec![];
                 file.read_to_end(&mut buf).await?;
                 let (len, hash) = Hash::hash(&buf[..])?;
-                let final_path = path_for_hash(self.temp_path.clone().parent().unwrap(), &hash);
+                let final_path = path_for_hash(&self.root, &hash);
                 if final_path.exists() {
                     tokio::fs::remove_file(self.temp_path.clone()).await?;
                 } else {
