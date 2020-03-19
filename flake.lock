@@ -1,17 +1,40 @@
 {
-    "inputs": {
-        "import-cargo": {
-            "inputs": {},
-            "narHash": "sha256-wIXWOpX9rRjK5NDsL6WzuuBJl2R0kUCnlpZUrASykSc=",
-            "originalUrl": "github:edolstra/import-cargo",
-            "url": "github:edolstra/import-cargo/8abf7b3a8cbe1c8a885391f826357a74d382a422"
-        },
-        "nixpkgs": {
-            "inputs": {},
-            "narHash": "sha256-NB+H7zK3BB//zM127FqgbG4iAfY+nS/IOyO+uGWA5Ho=",
-            "originalUrl": "github:edolstra/nixpkgs",
-            "url": "github:edolstra/nixpkgs/7845bf5f4b3013df1cf036e9c9c3a55a30331db9"
-        }
+  "inputs": {
+    "import-cargo": {
+      "info": {
+        "narHash": "sha256-wIXWOpX9rRjK5NDsL6WzuuBJl2R0kUCnlpZUrASykSc="
+      },
+      "inputs": {},
+      "locked": {
+        "owner": "edolstra",
+        "repo": "import-cargo",
+        "rev": "8abf7b3a8cbe1c8a885391f826357a74d382a422",
+        "type": "github"
+      },
+      "original": {
+        "owner": "edolstra",
+        "repo": "import-cargo",
+        "type": "github"
+      }
     },
-    "version": 3
+    "nixpkgs": {
+      "info": {
+        "lastModified": 1584005984,
+        "narHash": "sha256-03f6E170BUcrc55di8U+cGdCIF/TaMWRf50iPBSGrKQ="
+      },
+      "inputs": {},
+      "locked": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "730453919bdc191496eb5dda04d69c4c99c724b9",
+        "type": "github"
+      },
+      "original": {
+        "id": "nixpkgs",
+        "ref": "nixos-20.03",
+        "type": "indirect"
+      }
+    }
+  },
+  "version": 4
 }
