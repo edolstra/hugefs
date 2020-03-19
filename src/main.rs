@@ -8,7 +8,7 @@ mod fuse_util;
 mod fusefs;
 mod hash;
 mod local_store;
-//mod s3_store;
+mod s3_store;
 mod store;
 
 use crate::{
@@ -72,7 +72,11 @@ fn read_key_file(key_file: &Path) -> Result<(KeyFingerprint, Key), std::io::Erro
 type Keys = HashMap<KeyFingerprint, Key>;
 
 fn open_store(store_loc: &str, keys: &Keys) -> Result<Arc<dyn Store>, Error> {
-    let mut store: Arc<dyn Store> = Arc::new(local_store::LocalStore::new(store_loc.into())?);
+    let mut store: Arc<dyn Store> = if store_loc.starts_with("s3://") {
+        Arc::new(s3_store::S3Store::new(&store_loc[5..]))
+    } else {
+        Arc::new(local_store::LocalStore::new(store_loc.into())?)
+    };
 
     let config = store.get_config()?;
 
