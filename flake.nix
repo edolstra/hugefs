@@ -13,7 +13,7 @@
     let
 
       buildPackage = { isShell }: stdenv.mkDerivation {
-        name = "hugefs-${lib.substring 0 8 self.lastModified}-${self.shortRev or "0000000"}";
+        name = "hugefs-${lib.substring 0 8 self.lastModifiedDate}-${self.shortRev or "0000000"}";
 
         buildInputs =
           [ rustc
