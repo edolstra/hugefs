@@ -1,6 +1,9 @@
-use crate::error::Error;
-use crate::hash::Hash;
-use crate::store::{Config, Future, Result, Store};
+use crate::{
+    error::Error,
+    hash::Hash,
+    store::{Config, Future, Result, Store},
+    types::MutableFileId,
+};
 use log::debug;
 use std::fs::File;
 use std::io::Read;
@@ -33,15 +36,19 @@ impl LocalStore {
         Ok(Self { root, config })
     }
 
-    fn make_temp_path(&self) -> PathBuf {
-        self.root.clone().join("mutable").join(format!(
+    fn make_mutable_file_path(&self, id: &MutableFileId) -> PathBuf {
+        self.root.clone().join("mutable").join(id)
+    }
+
+    fn make_new_id(&self) -> MutableFileId {
+        format!(
             "{}.{}",
             process::id(),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
-        ))
+        )
     }
 }
 
@@ -123,18 +130,46 @@ impl Store for LocalStore {
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn crate::store::MutableFile>>> {
         Some(Box::pin(async move {
-            let temp_path = self.make_temp_path();
+            let id = self.make_new_id();
+            let path = self.make_mutable_file_path(&id);
             let file = tokio::fs::OpenOptions::new()
                 .create_new(true)
                 .read(true)
                 .write(true)
-                .open(temp_path.clone())
+                .open(path.clone())
                 .await?;
             let handle: Box<dyn crate::store::MutableFile> = Box::new(MutableFile {
-                temp_path,
+                path,
                 root: self.root.clone(),
                 file: futures::lock::Mutex::new(Some(file)),
                 len: AtomicU64::new(0),
+                keep: false,
+            });
+            Ok(handle)
+        }))
+    }
+
+    fn open_file<'a>(
+        &'a self,
+        id: &crate::types::MutableFileId,
+    ) -> Option<Future<'a, Box<dyn crate::store::MutableFile>>> {
+        let path = self.make_mutable_file_path(&id);
+        if !path.exists() {
+            return None;
+        }
+
+        Some(Box::pin(async move {
+            let file = tokio::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(path.clone())
+                .await?;
+            let handle: Box<dyn crate::store::MutableFile> = Box::new(MutableFile {
+                path,
+                root: self.root.clone(),
+                file: futures::lock::Mutex::new(Some(file)),
+                len: AtomicU64::new(0),
+                keep: true,
             });
             Ok(handle)
         }))
@@ -142,20 +177,26 @@ impl Store for LocalStore {
 }
 
 struct MutableFile {
-    temp_path: PathBuf,
+    path: PathBuf,
     root: PathBuf,
     file: futures::lock::Mutex<Option<tokio::fs::File>>,
     len: AtomicU64,
+    keep: bool,
 }
 
 impl Drop for MutableFile {
     fn drop(&mut self) {
-        // FIXME: only do this when necessary
-        let _ = std::fs::remove_file(&self.temp_path);
+        if !self.keep {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
 impl crate::store::MutableFile for MutableFile {
+    fn get_id(&self) -> MutableFileId {
+        self.path.file_name().unwrap().to_str().unwrap().into()
+    }
+
     fn write<'a>(&'a self, offset: u64, data: &'a [u8]) -> Future<'a, ()> {
         Box::pin(async move {
             let mut file_lock = self.file.lock().await;
@@ -200,9 +241,9 @@ impl crate::store::MutableFile for MutableFile {
                 let (len, hash) = Hash::hash(&buf[..])?;
                 let final_path = path_for_hash(&self.root, &hash);
                 if final_path.exists() {
-                    tokio::fs::remove_file(self.temp_path.clone()).await?;
+                    tokio::fs::remove_file(self.path.clone()).await?;
                 } else {
-                    tokio::fs::rename(self.temp_path.clone(), final_path).await?;
+                    tokio::fs::rename(self.path.clone(), final_path).await?;
                 }
                 Ok((len, hash))
             } else {
@@ -213,5 +254,21 @@ impl crate::store::MutableFile for MutableFile {
 
     fn len(&self) -> u64 {
         self.len.load(Ordering::Relaxed)
+    }
+
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+
+    fn set_file_length<'a>(&'a self, length: u64) -> Future<'a, ()> {
+        Box::pin(async move {
+            let mut file_lock = self.file.lock().await;
+            if let Some(mut file) = file_lock.take() {
+                file.set_len(length).await?;
+            } else {
+                panic!("write handle invalidated by previous write error") // FIXME: return error
+            }
+            Ok(())
+        })
     }
 }

@@ -1,8 +1,9 @@
 use crate::{
     error::{Error, Result},
-    fs::{Contents, Ino},
     fusefs::FilesystemState,
     hash::Hash,
+    types::Ino,
+    fs_sqlite::FileTypeInfo,
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -99,38 +100,36 @@ async fn handle_inner(
     }
 }
 
-async fn handle_status(path: &Path, fs: Arc<RwLock<FilesystemState>>) -> Result<StatusResponse> {
-    let mut status = {
-        let inode = fs.read().unwrap().superblock.lookup_path(path)?;
-        let inode = inode.read().unwrap();
-
-        let info = match &inode.contents {
-            Contents::Directory(_) => FileType::Directory {},
-            Contents::RegularFile(file) => FileType::ImmutableFile {
-                size: file.length,
-                hash: file.hash.clone(),
-                stores: vec![],
-            },
-            Contents::MutableFile(_) => FileType::MutableFile {},
-            Contents::Symlink(_) => FileType::Symlink {},
-        };
-
-        StatusResponse {
-            ino: inode.ino,
-            info,
-        }
+async fn handle_status(path: &Path, state: Arc<RwLock<FilesystemState>>) -> Result<StatusResponse> {
+    let st = {
+        let state = state.read().unwrap();
+        state.fs.stat(state.fs.lookup_path(path)?)?
     };
 
-    if let FileType::ImmutableFile { stores, hash, .. } = &mut status.info {
-        let ss = fs.read().unwrap().stores.clone();
-        for store in ss {
-            if store.has(hash).await? {
-                stores.push(store.get_url());
-            }
-        }
-    }
+    let info = match st.file_type {
+        FileTypeInfo::MutableRegular { .. } => FileType::MutableFile {},
+        FileTypeInfo::ImmutableRegular { length, hash } => FileType::ImmutableFile {
+            size: length,
+            hash: hash.clone(),
+            stores: {
+                let mut stores = vec![];
+                let ss = state.read().unwrap().stores.clone();
+                for store in ss {
+                    if store.has(&hash).await? {
+                        stores.push(store.get_url());
+                    }
+                }
+                stores
+            },
+        },
+        FileTypeInfo::Directory { .. } => FileType::Directory {},
+        FileTypeInfo::Symlink { .. } => FileType::Symlink {},
+    };
 
-    Ok(status)
+    Ok(StatusResponse {
+        ino: st.ino,
+        info,
+    })
 }
 
 async fn handle_mirror(
@@ -138,6 +137,7 @@ async fn handle_mirror(
     store: &str,
     fs: Arc<RwLock<FilesystemState>>,
 ) -> Result<MirrorResponse> {
+    /*
     let (hash, size, stores) = {
         let fs = fs.read().unwrap();
         let inode = fs.superblock.lookup_path(path)?;
@@ -175,4 +175,6 @@ async fn handle_mirror(
         }
         Err(Error::NoSuchHash(hash))
     }
+     */
+    unimplemented!()
 }

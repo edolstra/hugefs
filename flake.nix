@@ -1,10 +1,8 @@
 {
-  edition = 201909;
-
   description = "A content-addressable archival filesystem";
 
-  inputs.import-cargo.uri = "github:edolstra/import-cargo";
-  inputs.nixpkgs.uri = "flake:nixpkgs/nixos-20.03";
+  inputs.import-cargo.url = "github:edolstra/import-cargo";
+  inputs.nixpkgs.url = "flake:nixpkgs/nixos-20.03";
 
   outputs = { self, nixpkgs, import-cargo }:
     with import nixpkgs { system = "x86_64-linux"; };

@@ -1,5 +1,4 @@
-use crate::error::Error;
-use crate::hash::Hash;
+use crate::{error::Error, hash::Hash, types::MutableFileId};
 use serde::Deserialize;
 use std::convert::TryFrom;
 
@@ -17,6 +16,8 @@ pub trait Store: Send + Sync {
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn MutableFile>>>;
 
+    fn open_file<'a>(&'a self, id: &MutableFileId) -> Option<Future<'a, Box<dyn MutableFile>>>;
+
     fn get_config(&self) -> Result<Config> {
         Ok(Config::default())
     }
@@ -30,6 +31,8 @@ pub struct Config {
 }
 
 pub trait MutableFile: Send + Sync {
+    fn get_id(&self) -> MutableFileId;
+
     fn write<'a>(&'a self, offset: u64, data: &'a [u8]) -> Future<'a, ()>;
 
     fn read<'a>(&'a self, offset: u64, size: u32) -> Future<'a, Vec<u8>>;
@@ -37,6 +40,10 @@ pub trait MutableFile: Send + Sync {
     fn finish<'a>(&'a self) -> Future<'a, (u64, Hash)>;
 
     fn len(&self) -> u64;
+
+    fn keep(&mut self);
+
+    fn set_file_length<'a>(&'a self, length: u64) -> Future<'a, ()>;
 }
 
 pub async fn copy_file(

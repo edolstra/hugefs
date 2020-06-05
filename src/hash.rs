@@ -17,6 +17,10 @@ impl Hash {
         Self(*GenericArray::from_slice(&bytes))
     }
 
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(*GenericArray::from_slice(&bytes))
+    }
+
     pub fn to_string(&self) -> String {
         base64::encode(&self.0[..])
     }

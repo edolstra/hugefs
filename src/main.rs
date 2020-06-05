@@ -3,13 +3,15 @@
 mod control;
 mod encrypted_store;
 mod error;
-mod fs;
+//mod fs;
+mod fs_sqlite;
 mod fuse_util;
 mod fusefs;
 mod hash;
 mod local_store;
 mod s3_store;
 mod store;
+mod types;
 
 use crate::{
     control::{FileType, Request, Response},
@@ -109,25 +111,59 @@ fn mount(
     let stores: Result<Vec<_>, _> = stores.iter().map(|s| open_store(s, &keys)).collect();
     let stores = stores?;
 
-    let superblock = if state_file.exists() {
-        fs::Superblock::open_from_json(&mut std::fs::File::open(&state_file).unwrap()).unwrap()
-    } else {
-        fs::Superblock::new()
-    };
+    let fs = fs_sqlite::Filesystem::open(&state_file)?;
 
-    let fs_state = Arc::new(RwLock::new(fusefs::FilesystemState::new(
-        superblock, stores,
-    )));
+    /*
+    let dir = fs.create_file(
+        fs.get_root_ino(),
+        &"foo",
+        &fs_sqlite::NewFileInfo {
+            file_type: fs_sqlite::NewFileTypeInfo::Directory,
+            perm: 0o755,
+            uid: 1000,
+            gid: 100,
+        },
+    )?;
 
-    let fs = fusefs::Filesystem::new(Arc::clone(&fs_state), rt.handle().clone());
+    fs.create_file(
+        dir,
+        &"bar",
+        &fs_sqlite::NewFileInfo {
+            file_type: fs_sqlite::NewFileTypeInfo::MutableRegular {
+                name: "/bar".to_string(),
+            },
+            perm: 0o644,
+            uid: 1000,
+            gid: 100,
+        },
+    )?;
+
+    fs.create_file(
+        fs.get_root_ino(),
+        &"foo.mp4",
+        &fs_sqlite::NewFileInfo {
+            file_type: fs_sqlite::NewFileTypeInfo::ImmutableRegular {
+                hash: hash::Hash::from_hex(&"e17acaacaf626f9067ee47b45229f7d07fc0af1d19d5c62c41aba6a092c76414e4a4883c664a1cd15c64e5911eea00b9babb5b120e480a336a265a79bd5544fb"),
+                length: 17585334377,
+            },
+            perm: 0o644,
+            uid: 1000,
+            gid: 100,
+        },
+    )?;
+    */
+
+    let fs_state = Arc::new(RwLock::new(fusefs::FilesystemState::new(fs, stores)));
+
+    let fuse_fs = fusefs::FuseFilesystem::new(Arc::clone(&fs_state), rt.handle().clone());
 
     let s: OsString = "default_permissions".into();
 
-    fuse::mount(fs, &mount_point, &vec![s.as_os_str()]).unwrap();
+    fuse::mount(fuse_fs, &mount_point, &vec![s.as_os_str()]).unwrap();
 
     drop(rt);
 
-    fs_state.read().unwrap().sync(&state_file).unwrap();
+    //fs_state.read().unwrap().sync(&state_file).unwrap();
 
     Ok(())
 }

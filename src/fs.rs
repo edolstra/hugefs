@@ -1,5 +1,6 @@
 use crate::error::{Error, Result};
 use crate::hash::Hash;
+use crate::types::{Ino, Time};
 use libc;
 use serde::{Deserialize, Serialize};
 use std::collections::{hash_map::Entry, BTreeMap, HashMap};
@@ -8,34 +9,6 @@ use std::io::{Read, Write};
 //use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-pub type Ino = u64;
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct Time(pub i64);
-
-impl From<&Time> for SystemTime {
-    fn from(time: &Time) -> Self {
-        SystemTime::UNIX_EPOCH + Duration::from_nanos(time.0 as u64)
-    }
-}
-
-impl From<SystemTime> for Time {
-    fn from(time: SystemTime) -> Self {
-        Time(time.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64)
-    }
-}
-
-impl Time {
-    pub fn from_nanos(secs: i64, nsecs: i64) -> Self {
-        Time(secs * 1000000000 + nsecs)
-    }
-
-    pub fn now() -> Self {
-        SystemTime::now().into()
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Superblock {

@@ -31,11 +31,11 @@ impl Store for S3Store {
         format!("s3://{}", self.bucket_name)
     }
 
-    fn add<'a>(&'a self, file_hash: &Hash, data: &'a [u8]) -> Future<'a, ()> {
+    fn add<'a>(&'a self, _file_hash: &Hash, _data: &'a [u8]) -> Future<'a, ()> {
         unimplemented!()
     }
 
-    fn has<'a>(&'a self, file_hash: &Hash) -> Future<'a, bool> {
+    fn has<'a>(&'a self, _file_hash: &Hash) -> Future<'a, bool> {
         unimplemented!()
     }
 
@@ -77,5 +77,12 @@ impl Store for S3Store {
 
     fn create_file<'a>(&'a self) -> Option<Future<'a, Box<dyn crate::store::MutableFile>>> {
         unimplemented!()
+    }
+
+    fn open_file<'a>(
+        &'a self,
+        _id: &crate::types::MutableFileId,
+    ) -> Option<Future<'a, Box<dyn crate::store::MutableFile>>> {
+        None
     }
 }

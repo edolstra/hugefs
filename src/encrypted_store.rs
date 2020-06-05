@@ -121,6 +121,13 @@ impl Store for EncryptedStore {
         None
     }
 
+    fn open_file<'a>(
+        &'a self,
+        _id: &crate::types::MutableFileId,
+    ) -> Option<Future<'a, Box<dyn MutableFile>>> {
+        None
+    }
+
     fn get_url(&self) -> String {
         self.inner.get_url()
     }
