@@ -64,6 +64,10 @@ enum CLI {
     /// Copy a file to a backing store
     #[structopt(name = "mirror")]
     Mirror { path: PathBuf, store: String },
+
+    /// Make a file immutable
+    #[structopt(name = "finalize")]
+    Finalize { path: PathBuf },
 }
 
 fn read_key_file(key_file: &Path) -> Result<(KeyFingerprint, Key), std::io::Error> {
@@ -222,10 +226,17 @@ fn status(path: &Path) -> Result<(), Error> {
         Response::Status(status) => {
             println!(" Type: {}", status.info.get_type());
             match status.info {
+                FileType::MutableFile { length, id, .. } => {
+                    println!(" Size: {}", length);
+                    println!(" Id:   {}", id);
+                }
                 FileType::ImmutableFile {
-                    size, hash, stores, ..
+                    length,
+                    hash,
+                    stores,
+                    ..
                 } => {
-                    println!(" Size: {}", size);
+                    println!(" Size: {}", length);
                     println!(" Hash: {}", hash.to_hex());
                     for store in stores {
                         println!("Store: {}", store);
@@ -315,6 +326,20 @@ fn mirror(path: &Path, store: &str) -> Result<(), Error> {
     Ok(())
 }
 
+fn finalize(path: &Path) -> Result<(), Error> {
+    let (root, path) = get_fs_root(path)?;
+
+    let req = Request::Finalize { path: path.into() };
+
+    match execute_request(&root, req)? {
+        Response::Finalize(_) => {}
+        Response::Error { msg } => return Err(Error::ControlError(msg)),
+        _ => panic!("Unexpected daemon response."),
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     let _ = env_logger::try_init();
 
@@ -342,6 +367,10 @@ fn main() -> Result<(), Error> {
 
         CLI::Mirror { path, store } => {
             mirror(&path, &store)?;
+        }
+
+        CLI::Finalize { path } => {
+            finalize(&path)?;
         }
     }
 

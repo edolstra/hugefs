@@ -158,6 +158,29 @@ impl Filesystem {
         Ok(stat)
     }
 
+    pub fn finalize(&self, ino: Ino, hash: &Hash) -> Result<()> {
+        let mut conn = self.pool.get()?;
+        let txn = conn.transaction()?;
+
+        let mut st = stat(&txn, ino)?;
+
+        if let FileTypeInfo::MutableRegular { .. } = st.file_type {
+            let mut stmt =
+                txn.prepare_cached("update Inodes set type = ?, ptr = ? where ino = ?")?;
+            let nr_updated = stmt.execute(&[
+                &2, // FIXME
+                &hash.0.to_vec() as &dyn ToSql,
+                &(ino as i64),
+            ])?;
+            assert_eq!(nr_updated, 1);
+        } else {
+            return Err(Error::NotMutableFile(ino));
+        }
+
+        txn.commit()?;
+        Ok(())
+    }
+
     pub fn remove_file(&self, parent_ino: Ino, name: &str) -> Result<()> {
         let mut conn = self.pool.get()?;
         let txn = conn.transaction()?;

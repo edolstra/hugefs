@@ -1,9 +1,9 @@
 use crate::{
     error::{Error, Result},
-    fusefs::FilesystemState,
-    hash::Hash,
-    types::Ino,
     fs_sqlite::FileTypeInfo,
+    fusefs::{FilesystemState, open_file},
+    hash::Hash,
+    types::{Ino, MutableFileId},
 };
 use log::debug;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 pub enum Request {
     Status { path: PathBuf },
     Mirror { path: PathBuf, store: String },
+    Finalize { path: PathBuf },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +22,7 @@ pub enum Response {
     Error { msg: String },
     Status(StatusResponse),
     Mirror(MirrorResponse),
+    Finalize(FinalizeResponse),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,15 +37,18 @@ pub struct MirrorResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct FinalizeResponse {}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FileType {
     Directory {},
     ImmutableFile {
-        size: u64,
+        length: u64,
         hash: Hash,
         stores: Vec<String>,
     },
-    MutableFile {},
+    MutableFile { length: u64, id: MutableFileId },
     Symlink {},
 }
 
@@ -97,6 +102,9 @@ async fn handle_inner(
         Request::Mirror { path, store } => handle_mirror(&path, &store, fs)
             .await
             .map(|x| Response::Mirror(x)),
+        Request::Finalize { path } => handle_finalize(&path, fs)
+            .await
+            .map(|x| Response::Finalize(x)),
     }
 }
 
@@ -107,9 +115,11 @@ async fn handle_status(path: &Path, state: Arc<RwLock<FilesystemState>>) -> Resu
     };
 
     let info = match st.file_type {
-        FileTypeInfo::MutableRegular { .. } => FileType::MutableFile {},
+        FileTypeInfo::MutableRegular { length, id } => FileType::MutableFile {
+            length, id
+        },
         FileTypeInfo::ImmutableRegular { length, hash } => FileType::ImmutableFile {
-            size: length,
+            length,
             hash: hash.clone(),
             stores: {
                 let mut stores = vec![];
@@ -126,10 +136,7 @@ async fn handle_status(path: &Path, state: Arc<RwLock<FilesystemState>>) -> Resu
         FileTypeInfo::Symlink { .. } => FileType::Symlink {},
     };
 
-    Ok(StatusResponse {
-        ino: st.ino,
-        info,
-    })
+    Ok(StatusResponse { ino: st.ino, info })
 }
 
 async fn handle_mirror(
@@ -177,4 +184,24 @@ async fn handle_mirror(
     }
      */
     unimplemented!()
+}
+
+async fn handle_finalize(
+    path: &Path,
+    state: Arc<RwLock<FilesystemState>>,
+) -> Result<FinalizeResponse> {
+    let st = {
+        let state = state.read().unwrap();
+        state.fs.stat(state.fs.lookup_path(path)?)?
+    };
+
+    if let FileTypeInfo::MutableRegular { id, length } = st.file_type {
+        let stores = state.read().unwrap().stores.clone();
+        let mutable_file = open_file(stores, &id).await?;
+        let (length2, hash) = mutable_file.finish().await?;
+        assert_eq!(length, length2);
+        state.read().unwrap().fs.finalize(st.ino, &hash)?;
+    }
+
+    Ok(FinalizeResponse {})
 }

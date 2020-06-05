@@ -881,7 +881,7 @@ async fn create_file(stores: Vec<Store>) -> Result<Box<dyn MutableFile>> {
     Err(Error::NoWritableStore)
 }
 
-async fn open_file(
+pub async fn open_file(
     stores: Vec<Store>,
     mutable_file_id: &MutableFileId,
 ) -> Result<Box<dyn MutableFile>> {
