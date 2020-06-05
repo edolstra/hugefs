@@ -1,10 +1,9 @@
 {
   "nodes": {
     "import-cargo": {
-      "info": {
-        "narHash": "sha256-wIXWOpX9rRjK5NDsL6WzuuBJl2R0kUCnlpZUrASykSc="
-      },
       "locked": {
+        "lastModified": 1567183309,
+        "narHash": "sha256-wIXWOpX9rRjK5NDsL6WzuuBJl2R0kUCnlpZUrASykSc=",
         "owner": "edolstra",
         "repo": "import-cargo",
         "rev": "8abf7b3a8cbe1c8a885391f826357a74d382a422",
@@ -17,14 +16,12 @@
       }
     },
     "nixpkgs": {
-      "info": {
-        "lastModified": 1585964594,
-        "narHash": "sha256-t4gxs2MbJEhtPCx1It/ckzLOt81fX6fjHrCIG2MwaYQ="
-      },
       "locked": {
+        "lastModified": 1591200341,
+        "narHash": "sha256-6RiqKKyvQAYNbmCdQq/b7umkJS4jymfrqLMERyoRCHE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "4dc8447c55fe5262bad1019121a8e6d3f9e1e71f",
+        "rev": "05a32d8e771dc39438835ba0e3141d68ad4e3068",
         "type": "github"
       },
       "original": {
@@ -41,5 +38,5 @@
     }
   },
   "root": "root",
-  "version": 5
+  "version": 6
 }
